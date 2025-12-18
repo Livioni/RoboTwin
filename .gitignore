@@ -10,6 +10,7 @@ viewer_show.*
 eval_video/
 task_config/
 **/.DS_Store
+extracted_data/
 
 # eval result
 eval_result/
