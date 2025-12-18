@@ -39,7 +39,17 @@ def get_embodiment_config(robot_file):
 def main(task_name=None, task_config=None):
 
     task = class_decorator(task_name)
-    config_path = f"./task_config/{task_config}.yml"
+    # Support both .yml and .yaml (some users prefer .yaml extension)
+    config_path_yml = f"./task_config/{task_config}.yml"
+    config_path_yaml = f"./task_config/{task_config}.yaml"
+    if os.path.exists(config_path_yml):
+        config_path = config_path_yml
+    elif os.path.exists(config_path_yaml):
+        config_path = config_path_yaml
+    else:
+        raise FileNotFoundError(
+            f"Task config not found: {config_path_yml} or {config_path_yaml}"
+        )
 
     with open(config_path, "r", encoding="utf-8") as f:
         args = yaml.load(f.read(), Loader=yaml.FullLoader)

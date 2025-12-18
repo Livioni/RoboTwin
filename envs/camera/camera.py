@@ -447,6 +447,7 @@ class Camera:
 
         return res
 
+
     # Get World PointCloud
     def get_world_pcd(self):
         self.world_camera1.take_picture()
