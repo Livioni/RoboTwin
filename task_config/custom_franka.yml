@@ -1,9 +1,9 @@
 # if you want to modify the config, please check the following tutorial first:
 # https://robotwin-platform.github.io/doc/usage/configurations.html
 render_freq: 0
-episode_num: 100
+episode_num: 50
 use_seed: false
-save_freq: 30
+save_freq: 10
 # NOTE:
 # - len(embodiment)==1  -> dual_arm_embodied=True  -> treat as a single dual-arm URDF (needs curobo_left/right.yml)
 # - len(embodiment)==3  -> dual_arm_embodied=False -> load two separate robots with a distance
@@ -17,7 +17,7 @@ domain_randomization:
   random_head_camera_dis: 0
   random_table_height: 0.1
   random_light: true
-  crazy_random_light_rate: 0
+  crazy_random_light_rate: 0.1
 camera:
   head_camera_type: Modified_D435
   wrist_camera_type: Modified_D435

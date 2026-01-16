@@ -1,0 +1,60 @@
+urdf_path: "./panda.urdf"
+srdf_path: "./panda.srdf"
+joint_stiffness: 1000
+joint_damping: 200
+gripper_stiffnes: 1000
+gripper_damping: 200
+move_group: ["panda_hand","panda_hand"]
+ee_joints: ["panda_hand_joint","panda_hand_joint"]
+arm_joints_name: [['panda_joint1', 'panda_joint2', 'panda_joint3', 'panda_joint4', 'panda_joint5', 'panda_joint6', 'panda_joint7'],
+                  ['panda_joint1', 'panda_joint2', 'panda_joint3', 'panda_joint4', 'panda_joint5', 'panda_joint6', 'panda_joint7']]
+# gripper_name: [["panda_finger_joint1", "panda_finger_joint2"],
+#                ["panda_finger_joint1", "panda_finger_joint2"]]
+gripper_name:
+  - base: "panda_finger_joint1"
+    mimic: [["panda_finger_joint2", 1., 0.]]
+  - base: "panda_finger_joint1"
+    mimic: [["panda_finger_joint2", 1., 0.]]
+gripper_bias: 0.08
+gripper_scale: [-0.01, 0.05]
+homestate: [[0, 0.19634954084936207, 0.0, -2.617993877991494, 0.0, 2.941592653589793, 0.7853981633974483],
+            [0, 0.19634954084936207, 0.0, -2.617993877991494, 0.0, 2.941592653589793, 0.7853981633974483]]
+# homestate: [[6.661495e-07, 0.332, -1.868001e-06, -1.629, -5.300593e-06, 2.103, 0.7854044, 0.04, 0.04],
+#             [6.661495e-07, 0.332, -1.868001e-06, -1.629, -5.300593e-06, 2.103, 0.7854044, 0.04, 0.04]]
+delta_matrix: [[0,0,1],[0,-1,0],[1,0,0]]
+global_trans_matrix: [[1,0,0],[0,-1,0],[0,0,-1]]
+robot_pose: [[0, -0.65, 0.75, 0.707, 0, 0, 0.707],
+             [0, -0.65, 0.75, 0.707, 0, 0, 0.707]]   # modify
+# planner: "mplib_screw" # mplib_screw
+planner: "curobo"
+dual_arm: False
+rotate_lim: [0.1, 0.8]
+grasp_perfect_direction: ['right', 'left']
+static_camera_list: 
+- name: head_camera
+  position:
+  - -0.032
+  - -0.45
+  - 1.35
+  forward:
+  - 0
+  - 0.6
+  - -0.8
+  left:
+  - -1
+  - 0
+  - 0
+# - name: front_camera
+#   type: D435
+#   position:
+#   - 0
+#   - -0.45
+#   - 0.85
+#   forward:
+#   - 0
+#   - 1
+#   - -0.1
+#   left:
+#   - -1
+#   - 0
+#   - 0

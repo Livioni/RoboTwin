@@ -14,7 +14,12 @@ cd "$ROOT_DIR"
 ./script/.update_path.sh > /dev/null 2>&1 || true
 
 # Where to store FINAL extracted data (task/robot/episode*/...)
-SAVE_ROOT="${SAVE_ROOT:-./processed_data}"
+# SAVE_ROOT="${SAVE_ROOT:-./datasets/aloha-agilex-1}"
+# SAVE_ROOT="${SAVE_ROOT:-./datasets/franka-panda-1}"
+# SAVE_ROOT="${SAVE_ROOT:-./datasets/arx-x5-1}"
+# SAVE_ROOT="${SAVE_ROOT:-./datasets/piper-1}"
+SAVE_ROOT="${SAVE_ROOT:-./datasets/ur5-wsg-1}"
+
 # Where RoboTwin writes RAW collected data (task/config/...)
 RAW_ROOT="${RAW_ROOT:-./data}"
 
@@ -22,9 +27,19 @@ mkdir -p "$SAVE_ROOT"
 
 # Single-robot settings
 # - CONFIG is the task_config name WITHOUT extension; collect_data.py supports both .yml and .yaml now.
-ROBOT="${ROBOT:-aloha-agilex}"
-CONFIG="${CONFIG:-custom_aloha}"
-GPU_ID="${GPU_ID:-0}"
+# ROBOT="${ROBOT:-aloha-agilex}"
+# ROBOT="${ROBOT:-franka-panda}"
+# ROBOT="${ROBOT:-arx-x5}"
+# ROBOT="${ROBOT:-piper}"
+ROBOT="${ROBOT:-ur5-wsg}"
+
+# CONFIG="${CONFIG:-custom_aloha}"
+# CONFIG="${CONFIG:-custom_franka}"
+# CONFIG="${CONFIG:-custom_arx}"
+# CONFIG="${CONFIG:-custom_piper}"
+CONFIG="${CONFIG:-custom_ur5}"
+
+GPU_ID="${GPU_ID:-3}"
 
 # Validate config exists (.yml or .yaml)
 if [[ ! -f "task_config/${CONFIG}.yml" && ! -f "task_config/${CONFIG}.yaml" ]]; then
@@ -50,7 +65,10 @@ for task in "${TASKS[@]}"; do
   echo "[GPU ${GPU_ID}] [${ROBOT}] collecting: ${task} (${CONFIG})"
 
   # collect raw
-  bash collect_data.sh "$task" "$CONFIG" "$GPU_ID"
+  if ! bash collect_data.sh "$task" "$CONFIG" "$GPU_ID"; then
+    echo "WARN: collect_data failed for ${task}, skipping to next task"
+    continue
+  fi
 
   # extract
   raw_dir="${RAW_ROOT}/${task}/${CONFIG}"
@@ -58,8 +76,8 @@ for task in "${TASKS[@]}"; do
   out_dir="${SAVE_ROOT}/${task}/${ROBOT}"
 
   if [[ ! -d "$episode_dir" ]]; then
-    echo "ERROR: episode dir not found: $episode_dir" >&2
-    exit 1
+    echo "WARN: episode dir not found for ${task}: $episode_dir. Skipping."
+    continue
   fi
 
   mkdir -p "$out_dir"

@@ -115,6 +115,10 @@ def main(task_name=None, task_config=None):
 
 def run(TASK_ENV, args):
     epid, suc_num, fail_num, seed_list = 0, 0, 0, []
+    # Guard against endless retries when no episode ever succeeds
+    max_retry_no_success = args.get("max_retry_no_success", 5)
+    aborted_no_success = False
+    initial_epid = None  # Track initial seed for correct tries count
 
     print(f"Task Name: \033[34m{args['task_name']}\033[0m")
 
@@ -133,6 +137,12 @@ def run(TASK_ENV, args):
                     suc_num = len(seed_list)
                     epid = max(seed_list) + 1
             print(f"Exist seed file, Start from: {epid} / {suc_num}")
+        else:
+            # Use current time as initial seed if no seed file exists
+            epid = int(time.time())
+            print(f"Using current time as initial seed: {epid}")
+
+        initial_epid = epid  # Record initial seed value
 
         while suc_num < args["episode_num"]:
             try:
@@ -176,13 +186,29 @@ def run(TASK_ENV, args):
                     TASK_ENV.viewer.close()
                 time.sleep(1)
 
+            if (
+                suc_num >= 0
+                and max_retry_no_success is not None
+                and fail_num >= max_retry_no_success
+            ):
+                print(
+                    f"Reached {fail_num} failed attempts without any success, "
+                    f"abort collection for task {args['task_name']}."
+                )
+                aborted_no_success = True
+                break
+
             epid += 1
 
             with open(os.path.join(args["save_path"], "seed.txt"), "w") as file:
                 for sed in seed_list:
                     file.write("%s " % sed)
 
-        print(f"\nComplete simulation, failed \033[91m{fail_num}\033[0m times / {epid} tries \n")
+        if aborted_no_success:
+            return
+
+        total_tries = epid - initial_epid if initial_epid is not None else 0
+        print(f"\nComplete simulation, failed \033[91m{fail_num}\033[0m times / {total_tries} tries \n")
     else:
         print("\033[93m" + "Use Saved Seeds List".center(30, "-") + "\033[0m")
         with open(os.path.join(args["save_path"], "seed.txt"), "r") as file:
