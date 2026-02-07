@@ -82,7 +82,7 @@ bash test_one_task_one_robot.sh --gpu 0 --robot franka-panda --task beat_block_h
 
 3. 
 
-```urdf
+```xml
   <link name="camera_base">
     <visual>
       <origin rpy="-1.57079632679 -1.57079632679 -1.57079632679" xyz="0.008 -0.019 0"/>
@@ -118,7 +118,7 @@ bash test_one_task_one_robot.sh --gpu 0 --robot franka-panda --task beat_block_h
 
 1. 默认
 
-```urdf
+```xml
   <link name="camera_base">
     <visual>
       <origin xyz="0 0 0.0" rpy="0 0 0"/>

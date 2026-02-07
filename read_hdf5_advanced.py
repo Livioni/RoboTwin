@@ -346,9 +346,12 @@ def save_all_frames_camera_data(all_frames_data, output_dir="camera_data", camer
 
             # 深度数据（如果存在）
             if 'depth' in cam_data and cam_data['depth'] is not None:
-                depth_filename = f"frame_{frame_idx:06d}_{cam_name}.npy"
+                depth_filename = f"frame_{frame_idx:06d}_{cam_name}.png"
                 depth_filepath = os.path.join(depths_dir, depth_filename)
-                np.save(depth_filepath, cam_data['depth'])
+                # 将深度数据转换为uint16格式，直接保存为PNG
+                # 数据已经是mm单位，clip到uint16范围(0-65535)
+                depth_array = np.clip(cam_data['depth'].astype(np.float64), 0, 65535).astype(np.uint16)
+                Image.fromarray(depth_array).save(depth_filepath)
                 saved_count += 1
 
     print(f"完成! 共保存 {saved_count} 个相机数据文件到 {output_dir}")
@@ -476,8 +479,11 @@ def save_camera_data_from_hdf5(
             if save_depth and "depth" in cam_g:
                 depth = cam_g["depth"][frame_idx]
                 if depth is not None:
-                    depth_filename = f"frame_{frame_idx:06d}_{cam_name}.npy"
-                    np.save(os.path.join(depths_dir, depth_filename), depth)
+                    depth_filename = f"frame_{frame_idx:06d}_{cam_name}.png"
+                    # 将深度数据转换为uint16格式，直接保存为PNG
+                    # 数据已经是mm单位，clip到uint16范围(0-65535)
+                    depth_array = np.clip(depth.astype(np.float64), 0, 65535).astype(np.uint16)
+                    Image.fromarray(depth_array).save(os.path.join(depths_dir, depth_filename))
                     saved_count += 1
 
     return saved_count

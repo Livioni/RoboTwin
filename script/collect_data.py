@@ -114,9 +114,9 @@ def main(task_name=None, task_config=None):
 
 
 def run(TASK_ENV, args):
-    epid, suc_num, fail_num, seed_list = 0, 0, 0, []
+    epid, suc_num, fail_num, fail_count, seed_list = 0, 0, 0, 0, []
     # Guard against endless retries when no episode ever succeeds
-    max_retry_no_success = args.get("max_retry_no_success", 5)
+    max_retry_no_success = args.get("max_retry_no_success", 50)
     aborted_no_success = False
     initial_epid = None  # Track initial seed for correct tries count
 
@@ -154,9 +154,12 @@ def run(TASK_ENV, args):
                     seed_list.append(epid)
                     TASK_ENV.save_traj_data(suc_num)
                     suc_num += 1
+                    fail_count = 0
+                    
                 else:
                     print(f"simulate data episode {suc_num} fail! (seed = {epid})")
                     fail_num += 1
+                    fail_count += 1
 
                 TASK_ENV.close_env()
 
@@ -168,6 +171,7 @@ def run(TASK_ENV, args):
                 print("Error: ", e)
                 print(" -------------")
                 fail_num += 1
+                fail_count += 1
                 TASK_ENV.close_env()
 
                 if args["render_freq"]:
@@ -180,6 +184,7 @@ def run(TASK_ENV, args):
                 print("Error: ", e)
                 print(" -------------")
                 fail_num += 1
+                fail_count += 1
                 TASK_ENV.close_env()
 
                 if args["render_freq"]:
@@ -189,10 +194,10 @@ def run(TASK_ENV, args):
             if (
                 suc_num >= 0
                 and max_retry_no_success is not None
-                and fail_num >= max_retry_no_success
+                and fail_count >= max_retry_no_success
             ):
                 print(
-                    f"Reached {fail_num} failed attempts without any success, "
+                    f"Reached {fail_count} failed attempts without any success, "
                     f"abort collection for task {args['task_name']}."
                 )
                 aborted_no_success = True

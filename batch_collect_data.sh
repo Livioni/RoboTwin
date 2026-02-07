@@ -15,10 +15,10 @@ cd "$ROOT_DIR"
 
 # Where to store FINAL extracted data (task/robot/episode*/...)
 # SAVE_ROOT="${SAVE_ROOT:-./datasets/aloha-agilex-1}"
-# SAVE_ROOT="${SAVE_ROOT:-./datasets/franka-panda-1}"
-# SAVE_ROOT="${SAVE_ROOT:-./datasets/arx-x5-1}"
-# SAVE_ROOT="${SAVE_ROOT:-./datasets/piper-1}"
-SAVE_ROOT="${SAVE_ROOT:-./datasets/ur5-wsg-1}"
+# SAVE_ROOT="${SAVE_ROOT:-./datasets/franka-panda-2}"
+# SAVE_ROOT="${SAVE_ROOT:-./datasets/arx-x5-2}"
+# SAVE_ROOT="${SAVE_ROOT:-./datasets/piper-2}"
+SAVE_ROOT="${SAVE_ROOT:-./datasets/ur5-wsg-2}"
 
 # Where RoboTwin writes RAW collected data (task/config/...)
 RAW_ROOT="${RAW_ROOT:-./data}"
@@ -39,7 +39,7 @@ ROBOT="${ROBOT:-ur5-wsg}"
 # CONFIG="${CONFIG:-custom_piper}"
 CONFIG="${CONFIG:-custom_ur5}"
 
-GPU_ID="${GPU_ID:-3}"
+GPU_ID="${GPU_ID:-4}"
 
 # Validate config exists (.yml or .yaml)
 if [[ ! -f "task_config/${CONFIG}.yml" && ! -f "task_config/${CONFIG}.yaml" ]]; then
@@ -62,6 +62,12 @@ PY
 echo "Total tasks: ${#TASKS[@]}"
 
 for task in "${TASKS[@]}"; do
+  out_dir="${SAVE_ROOT}/${task}"
+  if [[ -d "$out_dir" ]]; then
+    echo "[GPU ${GPU_ID}] [${ROBOT}] skipping: ${task} (${CONFIG}) - already exists: ${out_dir}"
+    continue
+  fi
+
   echo "[GPU ${GPU_ID}] [${ROBOT}] collecting: ${task} (${CONFIG})"
 
   # collect raw
@@ -73,7 +79,7 @@ for task in "${TASKS[@]}"; do
   # extract
   raw_dir="${RAW_ROOT}/${task}/${CONFIG}"
   episode_dir="${raw_dir}/data"
-  out_dir="${SAVE_ROOT}/${task}/${ROBOT}"
+  out_dir="${SAVE_ROOT}/${task}"
 
   if [[ ! -d "$episode_dir" ]]; then
     echo "WARN: episode dir not found for ${task}: $episode_dir. Skipping."

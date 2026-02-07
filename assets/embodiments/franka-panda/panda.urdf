@@ -208,7 +208,7 @@
   <joint name="camera_joint" type="fixed">
     <parent link="camera_base"/>
     <child link="camera"/>
-    <origin rpy="1.57079632679 0 -0" xyz="0.042 -0.045 0.0"/>
+    <origin rpy="1.57079632679 0 0.3" xyz="0.042 -0.055 0.0"/>
     <!-- <axis xyz="0 -1 0"/> -->
   </joint>
   <link name="panda_leftfinger">
