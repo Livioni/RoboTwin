@@ -39,7 +39,16 @@ def get_embodiment_config(robot_file):
 def main(task_name=None, task_config=None):
 
     task = class_decorator(task_name)
-    config_path = f"./task_config/{task_config}.yml"
+    config_path_yml = f"./task_config/{task_config}.yml"
+    config_path_yaml = f"./task_config/{task_config}.yaml"
+    if os.path.exists(config_path_yml):
+        config_path = config_path_yml
+    elif os.path.exists(config_path_yaml):
+        config_path = config_path_yaml
+    else:
+        raise FileNotFoundError(
+            f"Task config not found: {config_path_yml} or {config_path_yaml}"
+        )
 
     with open(config_path, "r", encoding="utf-8") as f:
         args = yaml.load(f.read(), Loader=yaml.FullLoader)
@@ -104,7 +113,10 @@ def main(task_name=None, task_config=None):
 
 
 def run(TASK_ENV, args):
-    epid, suc_num, fail_num, seed_list = 0, 0, 0, []
+    epid, suc_num, fail_num, fail_count, seed_list = 0, 0, 0, 0, []
+    max_retry_no_success = args.get("max_retry_no_success", 50)
+    aborted_no_success = False
+    initial_epid = None
 
     print(f"Task Name: \033[34m{args['task_name']}\033[0m")
 
@@ -123,6 +135,11 @@ def run(TASK_ENV, args):
                     suc_num = len(seed_list)
                     epid = max(seed_list) + 1
             print(f"Exist seed file, Start from: {epid} / {suc_num}")
+        else:
+            epid = int(time.time())
+            print(f"Using current time as initial seed: {epid}")
+
+        initial_epid = epid
 
         while suc_num < args["episode_num"]:
             try:
@@ -134,9 +151,11 @@ def run(TASK_ENV, args):
                     seed_list.append(epid)
                     TASK_ENV.save_traj_data(suc_num)
                     suc_num += 1
+                    fail_count = 0
                 else:
                     print(f"simulate data episode {suc_num} fail! (seed = {epid})")
                     fail_num += 1
+                    fail_count += 1
 
                 TASK_ENV.close_env()
 
@@ -148,6 +167,7 @@ def run(TASK_ENV, args):
                 print("Error: ", e)
                 print(" -------------")
                 fail_num += 1
+                fail_count += 1
                 TASK_ENV.close_env()
 
                 if args["render_freq"]:
@@ -160,11 +180,20 @@ def run(TASK_ENV, args):
                 print("Error: ", e)
                 print(" -------------")
                 fail_num += 1
+                fail_count += 1
                 TASK_ENV.close_env()
 
                 if args["render_freq"]:
                     TASK_ENV.viewer.close()
                 time.sleep(1)
+
+            if max_retry_no_success is not None and fail_count >= max_retry_no_success:
+                print(
+                    f"Reached {fail_count} failed attempts without any success, "
+                    f"abort collection for task {args['task_name']}."
+                )
+                aborted_no_success = True
+                break
 
             epid += 1
 
@@ -172,7 +201,11 @@ def run(TASK_ENV, args):
                 for sed in seed_list:
                     file.write("%s " % sed)
 
-        print(f"\nComplete simulation, failed \033[91m{fail_num}\033[0m times / {epid} tries \n")
+        if aborted_no_success:
+            return
+
+        total_tries = epid - initial_epid if initial_epid is not None else 0
+        print(f"\nComplete simulation, failed \033[91m{fail_num}\033[0m times / {total_tries} tries \n")
     else:
         print("\033[93m" + "Use Saved Seeds List".center(30, "-") + "\033[0m")
         with open(os.path.join(args["save_path"], "seed.txt"), "r") as file:

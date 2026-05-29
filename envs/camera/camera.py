@@ -320,6 +320,39 @@ class Camera:
         # print(res)
         return res
 
+    def get_observer_data(self, include_rgb=True, include_depth=False) -> dict:
+        """
+        Return the fixed third-view camera data in the same schema as cameras
+        stored under observation/<camera_name>.
+        """
+        self.observer_camera.take_picture()
+
+        camera_intrinsic_cv = self.observer_camera.get_intrinsic_matrix()
+        camera_extrinsic_cv = self.observer_camera.get_extrinsic_matrix()
+        camera_model_matrix = self.observer_camera.get_model_matrix()
+
+        res = {
+            "intrinsic_cv": camera_intrinsic_cv,
+            "extrinsic_cv": camera_extrinsic_cv,
+            "cam2world_gl": camera_model_matrix,
+        }
+
+        rgba = None
+        if include_rgb or include_depth:
+            camera_rgba = self.observer_camera.get_picture("Color")
+            rgba = (camera_rgba * 255).clip(0, 255).astype("uint8")
+
+        if include_rgb:
+            res["rgb"] = rgba[:, :, :3]
+
+        if include_depth:
+            position = self.observer_camera.get_picture("Position")
+            depth = (-position[..., 2] * 1000.0).astype(np.float64)
+            depth *= rgba[:, :, 3] / 255
+            res["depth"] = depth
+
+        return res
+
     def get_rgb(self) -> dict:
         rgba = self.get_rgba()
         rgb = {}
@@ -364,14 +397,7 @@ class Camera:
         return res
 
     def get_observer_rgb(self) -> dict:
-        self.observer_camera.take_picture()
-
-        def _get_rgb(camera):
-            camera_rgba = camera.get_picture("Color")
-            camera_rgb_img = (camera_rgba * 255).clip(0, 255).astype("uint8")[:, :, :3]
-            return camera_rgb_img
-
-        return _get_rgb(self.observer_camera)
+        return self.get_observer_data(include_rgb=True, include_depth=False)["rgb"]
 
     # Get Camera Segmentation
     def get_segmentation(self, level="mesh") -> dict:

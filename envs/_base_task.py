@@ -452,8 +452,12 @@ class Base_Task(gym.Env):
                 pkl_dic["observation"][camera_name].update(rgb[camera_name])
 
         if self.data_type.get("third_view", False):
-            third_view_rgb = self.cameras.get_observer_rgb()
-            pkl_dic["third_view_rgb"] = third_view_rgb
+            third_view = self.cameras.get_observer_data(
+                include_rgb=True,
+                include_depth=self.data_type.get("depth", False),
+            )
+            pkl_dic["observation"]["third_view"] = third_view
+            pkl_dic["third_view_rgb"] = third_view["rgb"]
         # mesh_segmentation
         if self.data_type.get("mesh_segmentation", False):
             mesh_segmentation = self.cameras.get_segmentation(level="mesh")
