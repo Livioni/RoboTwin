@@ -71,6 +71,33 @@ def _total_frames(f: h5py.File) -> int:
                     continue
     return 0
 
+def _decode_attr_text(value) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+def episode_success_from_hdf5(f: h5py.File) -> Optional[bool]:
+    if "success" in f.attrs:
+        return bool(f.attrs["success"])
+    if "result" in f.attrs:
+        result = _decode_attr_text(f.attrs["result"]).strip().lower()
+        if result == "success":
+            return True
+        if result == "fail":
+            return False
+    return None
+
+def write_episode_result_marker(episode_output_dir: str, success: Optional[bool]) -> None:
+    for marker_name in ("success.txt", "fail.txt"):
+        marker_path = os.path.join(episode_output_dir, marker_name)
+        if os.path.exists(marker_path):
+            os.remove(marker_path)
+    if success is None:
+        return
+
+    marker_name = "success.txt" if success else "fail.txt"
+    open(os.path.join(episode_output_dir, marker_name), "w", encoding="utf-8").close()
+
 def _arm_motion_score(
     arm: Optional[np.ndarray],
     gripper: Optional[np.ndarray],
@@ -651,6 +678,8 @@ def process_one_episode(
     os.makedirs(episode_output_dir, exist_ok=True)
 
     with h5py.File(hdf5_path, "r") as f:
+        episode_success = episode_success_from_hdf5(f)
+        write_episode_result_marker(episode_output_dir, episode_success)
         available_cams = list_cameras(f)
 
         chosen_arm = prefer_arm
@@ -684,6 +713,8 @@ def process_one_episode(
             "save_cam2world": bool(save_cam2world),
             "save_depth_arrays": bool(save_depth_arrays),
             "save_both_arms": bool(save_both_arms),
+            "success": episode_success,
+            "result": ("success" if episode_success else "fail") if episode_success is not None else None,
             "missing_camera_fields": {},
         }
         for cam_name in selected_cams:

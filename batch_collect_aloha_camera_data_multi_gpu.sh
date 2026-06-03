@@ -29,18 +29,21 @@ Options:
   --video-fps FPS     FPS for exported MP4 videos (default: 30)
   --overwrite         Re-extract even if a task output directory already exists
   --keep-raw          Keep raw data/<task>/<config> after extraction
+  --bulk-extract      Use old behavior: extract all raw episodes after collection
+  --no-scan-output    Do not pre-scan extracted episodes for corrupt/incomplete files
   --dry-run           Print GPU/task assignment without running collection
   -h, --help          Show this help
 
 Environment overrides:
-  GPUS, CONFIG, SAVE_ROOT, RAW_ROOT, VIDEO_FPS, KEEP_RAW, OVERWRITE, CAMERAS
+  GPUS, CONFIG, SAVE_ROOT, RAW_ROOT, VIDEO_FPS, KEEP_RAW, OVERWRITE, CAMERAS, INCREMENTAL_EXTRACT,
+  SCAN_EXTRACTED_OUTPUT
 
 If no task_name is given, all task files under envs/*.py are collected.
 Each GPU runs one task at a time, then continues with the next assigned task.
 EOF
 }
 
-GPUS="${GPUS:-0 1 2 3}"
+GPUS="${GPUS:-0 1}"
 CONFIG="${CONFIG:-custom_aloha}"
 SAVE_ROOT="${SAVE_ROOT:-./datasets/robotwin_aloha}"
 RAW_ROOT="${RAW_ROOT:-./data}"
@@ -48,6 +51,8 @@ VIDEO_FPS="${VIDEO_FPS:-30}"
 KEEP_RAW="${KEEP_RAW:-0}"
 OVERWRITE="${OVERWRITE:-0}"
 CAMERAS="${CAMERAS:-head_camera left_camera right_camera third_view}"
+INCREMENTAL_EXTRACT="${INCREMENTAL_EXTRACT:-1}"
+SCAN_EXTRACTED_OUTPUT="${SCAN_EXTRACTED_OUTPUT:-1}"
 DRY_RUN=0
 
 TASKS=()
@@ -79,6 +84,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-raw)
       KEEP_RAW=1
+      shift
+      ;;
+    --bulk-extract)
+      INCREMENTAL_EXTRACT=0
+      shift
+      ;;
+    --no-scan-output)
+      SCAN_EXTRACTED_OUTPUT=0
       shift
       ;;
     --dry-run)
@@ -141,7 +154,55 @@ fi
 
 TMP_DIR="$(mktemp -d)"
 LOG_DIR="${SAVE_ROOT}/_logs"
-trap 'rm -rf "$TMP_DIR"' EXIT
+WORKER_PIDS=()
+
+kill_process_tree() {
+  local pid="$1"
+  local sig="${2:-TERM}"
+  local child
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+
+  while IFS= read -r child; do
+    kill_process_tree "$child" "$sig"
+  done < <(pgrep -P "$pid" 2>/dev/null || true)
+
+  kill "-${sig}" "$pid" 2>/dev/null || true
+}
+
+cleanup_tmp_dir() {
+  rm -rf "$TMP_DIR"
+}
+
+cancel_workers() {
+  local pid
+
+  trap - INT TERM EXIT
+  echo
+  echo "Interrupted; stopping GPU workers and pending tasks..." >&2
+
+  for pid in "${WORKER_PIDS[@]}"; do
+    kill_process_tree "$pid" TERM
+  done
+
+  sleep 2
+
+  for pid in "${WORKER_PIDS[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill_process_tree "$pid" KILL
+    fi
+  done
+
+  wait 2>/dev/null || true
+  cleanup_tmp_dir
+  echo "Stopped GPU workers. No further tasks will be started." >&2
+  exit 130
+}
+
+trap cleanup_tmp_dir EXIT
+trap cancel_workers INT TERM
 
 if [[ "$DRY_RUN" != "1" ]]; then
   mkdir -p "$LOG_DIR"
@@ -161,6 +222,8 @@ echo "GPUs: ${GPU_LIST[*]}"
 echo "Tasks: ${#TASKS[@]}"
 echo "Cameras: ${CAMERAS}"
 echo "Output root: ${SAVE_ROOT}"
+echo "Incremental extract: ${INCREMENTAL_EXTRACT}"
+echo "Scan extracted output: ${SCAN_EXTRACTED_OUTPUT}"
 echo "Logs: ${LOG_DIR}"
 
 for worker_idx in "${!GPU_LIST[@]}"; do
@@ -189,13 +252,22 @@ for worker_idx in "${!GPU_LIST[@]}"; do
   if [[ "$KEEP_RAW" == "1" ]]; then
     worker_args+=(--keep-raw)
   fi
+  if [[ "$INCREMENTAL_EXTRACT" != "1" ]]; then
+    worker_args+=(--bulk-extract)
+  fi
+  if [[ "$SCAN_EXTRACTED_OUTPUT" != "1" ]]; then
+    worker_args+=(--no-scan-output)
+  fi
 
   log_file="${LOG_DIR}/gpu_${gpu_id}.log"
   (
     export CAMERAS
+    export INCREMENTAL_EXTRACT
+    export SCAN_EXTRACTED_OUTPUT
     bash batch_collect_aloha_camera_data.sh "${worker_args[@]}" "${worker_tasks[@]}"
   ) > "$log_file" 2>&1 &
 
+  WORKER_PIDS+=("$!")
   echo "[GPU ${gpu_id}] started worker pid=$!, log=${log_file}"
 done
 

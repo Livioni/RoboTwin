@@ -32,4 +32,7 @@ pcd_crop: true
 save_path: ./data
 clear_cache_freq: 1
 collect_data: true
+collect_failed_data: false
+max_failed_episode_rate: 0.2
+failed_episode_max_frames: 100
 eval_video_log: true

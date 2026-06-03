@@ -75,7 +75,7 @@ def create_hdf5_from_dict(hdf5_group, data_dict):
                 print(f"Error storing value for key '{key}': {e}")
 
 
-def pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path):
+def pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path, metadata=None):
     data_list = parse_dict_structure(load_pkl_file(pkl_files[0]))
     for pkl_file_path in pkl_files:
         pkl_file = load_pkl_file(pkl_file_path)
@@ -85,9 +85,13 @@ def pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path):
 
     with h5py.File(hdf5_path, "w") as f:
         create_hdf5_from_dict(f, data_list)
+        if metadata:
+            for key, value in metadata.items():
+                if value is not None:
+                    f.attrs[key] = value
 
 
-def process_folder_to_hdf5_video(folder_path, hdf5_path, video_path):
+def process_folder_to_hdf5_video(folder_path, hdf5_path, video_path, max_frames=None, metadata=None):
     pkl_files = []
     for fname in os.listdir(folder_path):
         if fname.endswith(".pkl") and fname[:-4].isdigit():
@@ -106,4 +110,10 @@ def process_folder_to_hdf5_video(folder_path, hdf5_path, video_path):
             raise ValueError(f"Missing file {expected}.pkl")
         expected += 1
 
-    pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path)
+    if max_frames is not None:
+        max_frames = int(max_frames)
+        if max_frames <= 0:
+            raise ValueError(f"max_frames must be positive, got {max_frames}")
+        pkl_files = pkl_files[:max_frames]
+
+    pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path, metadata=metadata)
