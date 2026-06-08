@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple
 DEFAULT_3D_CAMERAS = ["head_camera", "left_camera", "right_camera", "third_view"]
 
 def decode_image(encoded_data):
-    """解码 JPEG 压缩的图像数据"""
+    """解码 JPEG 压缩的图像数据，返回 OpenCV 默认的 BGR 通道顺序。"""
     if isinstance(encoded_data, bytes):
         # 移除填充的 null 字节
         clean_data = encoded_data.rstrip(b'\x00')
@@ -35,9 +35,7 @@ def decode_image(encoded_data):
         img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         if img_bgr is None:
             return None
-        # 统一返回 RGB，避免后续保存/可视化颜色颠倒
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        return img_rgb
+        return img_bgr
     else:
         return encoded_data
 
@@ -264,7 +262,7 @@ def save_frame_images(frame_data, frame_idx, output_dir="extracted_images"):
         if img is not None:
             filename = f"frame_{frame_idx:04d}_{cam_name}.jpg"
             filepath = os.path.join(output_dir, filename)
-            success = cv2.imwrite(filepath, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+            success = cv2.imwrite(filepath, img)
             if success:
                 print(f"保存图像: {filepath}")
             else:
@@ -314,7 +312,7 @@ def save_all_frames_images(all_frames_data, output_dir="extracted_images", camer
             if img is not None:
                 filename = f"frame_{frame_idx:04d}_{cam_name}.jpg"
                 filepath = os.path.join(output_dir, filename)
-                success = cv2.imwrite(filepath, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                success = cv2.imwrite(filepath, img)
                 if success:
                     saved_count += 1
                 else:
@@ -356,8 +354,8 @@ def save_all_frames_camera_data(all_frames_data, output_dir="camera_data", camer
             if 'rgb' in cam_data and cam_data['rgb'] is not None:
                 rgb_filename = f"frame_{frame_idx:06d}_{cam_name}.png"
                 rgb_filepath = os.path.join(images_dir, rgb_filename)
-                # 使用PIL保存PNG
-                img = Image.fromarray(cam_data['rgb'])
+                # PIL 使用 RGB，decode_image 返回 BGR。
+                img = Image.fromarray(cv2.cvtColor(cam_data['rgb'], cv2.COLOR_BGR2RGB))
                 img.save(rgb_filepath)
                 saved_count += 1
 
@@ -509,8 +507,8 @@ def save_camera_data_from_hdf5(
         print("WARN: 未找到 ffmpeg，跳过 MP4 视频保存，仅保存逐帧数据。")
         save_videos = False
 
-    def _start_video_writer(cam_name: str, image_rgb: np.ndarray) -> subprocess.Popen:
-        h, w = image_rgb.shape[:2]
+    def _start_video_writer(cam_name: str, image_bgr: np.ndarray) -> subprocess.Popen:
+        h, w = image_bgr.shape[:2]
         video_path = os.path.join(_cam_dir(videos_dir, cam_name), "video.mp4")
         proc = subprocess.Popen(
             [
@@ -521,7 +519,7 @@ def save_camera_data_from_hdf5(
                 "-f",
                 "rawvideo",
                 "-pixel_format",
-                "rgb24",
+                "bgr24",
                 "-video_size",
                 f"{w}x{h}",
                 "-framerate",
@@ -558,13 +556,13 @@ def save_camera_data_from_hdf5(
                         if save_rgb:
                             rgb_filename = f"frame_{frame_idx:06d}.png"
                             rgb_filepath = os.path.join(_cam_dir(images_dir, cam_name), rgb_filename)
-                            img = Image.fromarray(decoded_img)
+                            img = Image.fromarray(cv2.cvtColor(decoded_img, cv2.COLOR_BGR2RGB))
                             img.save(rgb_filepath)
                             saved_count += 1
 
                         if save_videos:
                             if decoded_img.ndim != 3 or decoded_img.shape[2] != 3:
-                                print(f"WARN: {cam_name} 第 {frame_idx} 帧不是 RGB 图像，跳过写入视频。")
+                                print(f"WARN: {cam_name} 第 {frame_idx} 帧不是 BGR 图像，跳过写入视频。")
                             else:
                                 if cam_name not in video_writers:
                                     video_writers[cam_name] = _start_video_writer(cam_name, decoded_img)

@@ -10,4 +10,6 @@ export CUDA_VISIBLE_DEVICES=${gpu_id}
 
 PYTHONWARNINGS=ignore::UserWarning \
 python script/collect_data.py $task_name $task_config
+status=$?
 rm -rf data/${task_name}/${task_config}/.cache
+exit $status

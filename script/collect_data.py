@@ -318,12 +318,25 @@ def main(task_name=None, task_config=None):
 
 def run(TASK_ENV, args):
     epid, fail_num, fail_count, seed_list = 0, 0, 0, []
-    max_retry_no_success = args.get("max_retry_no_success", 50)
+    success_retry_limit = int(args.get("success_retry_limit", 100))
+    max_retry_no_success = args.get("max_retry_no_success", success_retry_limit)
     collect_failed_data = bool(args.get("collect_failed_data", False))
     failed_episode_max_frames = args.get("failed_episode_max_frames", 100)
     max_failed_episodes = _max_failed_episode_count(args)
     aborted_no_success = False
     initial_epid = None
+    allow_failed_fill = False
+
+    def enable_failed_fill(reason):
+        nonlocal allow_failed_fill
+        if allow_failed_fill:
+            return
+        allow_failed_fill = True
+        print(
+            "WARN: failed episode quota reached and no new success was found after "
+            f"{success_retry_limit} attempt(s); allowing failed episodes to fill "
+            f"remaining slots to episode_num={args['episode_num']}. Reason: {reason}"
+        )
 
     print(f"Task Name: \033[34m{args['task_name']}\033[0m")
     print(f"Collect failed episodes: {collect_failed_data}")
@@ -333,6 +346,7 @@ def run(TASK_ENV, args):
             f"Failed episode quota: {max_failed_episodes} / {args['episode_num']} "
             f"({max_failed_episodes / int(args['episode_num']):.1%})"
         )
+        print(f"Success retry limit after failed quota is full: {success_retry_limit}")
 
     # =========== Collect Seed ===========
     os.makedirs(args["save_path"], exist_ok=True)
@@ -369,8 +383,14 @@ def run(TASK_ENV, args):
                 TASK_ENV.play_once()
 
                 episode_success = bool(TASK_ENV.plan_success and TASK_ENV.check_success())
-                failed_quota_left = _count_failed(episode_statuses) < max_failed_episodes
-                can_save_failed_episode = collect_failed_data and TASK_ENV.plan_success and failed_quota_left
+                failed_count_after_update = _failed_count_after_update(
+                    episode_statuses, episode_idx, episode_success
+                )
+                can_save_failed_episode = (
+                    collect_failed_data
+                    and TASK_ENV.plan_success
+                    and (allow_failed_fill or failed_count_after_update <= max_failed_episodes)
+                )
                 can_save_episode = episode_success or (not episode_success and can_save_failed_episode)
 
                 if can_save_episode:
@@ -381,7 +401,11 @@ def run(TASK_ENV, args):
                     TASK_ENV.save_traj_data(episode_idx)
                     fail_count = 0
                 else:
-                    if collect_failed_data and TASK_ENV.plan_success and not failed_quota_left:
+                    if (
+                        collect_failed_data
+                        and TASK_ENV.plan_success
+                        and failed_count_after_update > max_failed_episodes
+                    ):
                         reason = f"failed episode quota reached ({max_failed_episodes}/{args['episode_num']})"
                     else:
                         reason = "unsavable trajectory"
@@ -419,7 +443,15 @@ def run(TASK_ENV, args):
                     TASK_ENV.viewer.close()
                 time.sleep(1)
 
-            if max_retry_no_success is not None and fail_count >= max_retry_no_success:
+            quota_is_full = collect_failed_data and _count_failed(episode_statuses) >= max_failed_episodes
+            if quota_is_full and not allow_failed_fill and fail_count >= success_retry_limit:
+                enable_failed_fill("seed collection could not find another successful episode")
+                fail_count = 0
+            elif (
+                not allow_failed_fill
+                and max_retry_no_success is not None
+                and fail_count >= max_retry_no_success
+            ):
                 print(
                     f"Reached {fail_count} failed attempts without any saved episode, "
                     f"abort collection for task {args['task_name']}."
@@ -473,11 +505,11 @@ def run(TASK_ENV, args):
             file_path = os.path.join(args["save_path"], 'data', f'episode{idx}.hdf5')
             return os.path.exists(file_path)
 
-        def regenerate_missing_traj_data(episode_idx):
-            nonlocal epid, fail_num, fail_count, seed_list, episode_statuses
+        def regenerate_missing_traj_data(episode_idx, force=False, initial_failed_attempts=0):
+            nonlocal epid, fail_num, fail_count, seed_list, episode_statuses, allow_failed_fill
 
             traj_path = _traj_data_path(args["save_path"], episode_idx)
-            if os.path.exists(traj_path):
+            if os.path.exists(traj_path) and not force:
                 return True
 
             if episode_idx >= len(seed_list):
@@ -490,15 +522,17 @@ def run(TASK_ENV, args):
             args["save_data"] = False
             args["render_freq"] = 0
 
-            next_seed = max(seed_list) + 1 if seed_list else int(time.time())
+            next_seed = max(max(seed_list) + 1 if seed_list else int(time.time()), epid)
             candidate_seed = seed_list[episode_idx]
-            tried_existing_seed = False
+            tried_existing_seed = force
+            attempts = initial_failed_attempts
 
             try:
                 while True:
                     if tried_existing_seed:
                         candidate_seed = next_seed
                         next_seed += 1
+                        epid = max(epid, next_seed)
                     tried_existing_seed = True
 
                     try:
@@ -508,9 +542,12 @@ def run(TASK_ENV, args):
                         )
                         TASK_ENV.setup_demo(now_ep_num=episode_idx, seed=candidate_seed, **args)
                         TASK_ENV.play_once()
+                        attempts += 1
 
                         episode_success = bool(TASK_ENV.plan_success and TASK_ENV.check_success())
-                        failed_quota_left = _count_failed(episode_statuses) < max_failed_episodes
+                        failed_count_after_update = _failed_count_after_update(
+                            episode_statuses, episode_idx, episode_success
+                        )
                         replacing_old_failure = (
                             episode_idx < len(episode_statuses)
                             and not bool(episode_statuses[episode_idx].get("success", True))
@@ -518,8 +555,25 @@ def run(TASK_ENV, args):
                         can_save_failed_episode = (
                             collect_failed_data
                             and TASK_ENV.plan_success
-                            and (failed_quota_left or replacing_old_failure)
+                            and (
+                                allow_failed_fill
+                                or replacing_old_failure
+                                or failed_count_after_update <= max_failed_episodes
+                            )
                         )
+                        if (
+                            not episode_success
+                            and not can_save_failed_episode
+                            and collect_failed_data
+                            and TASK_ENV.plan_success
+                            and failed_count_after_update > max_failed_episodes
+                            and attempts >= success_retry_limit
+                        ):
+                            enable_failed_fill(
+                                f"episode {episode_idx} trajectory regeneration exceeded retry limit"
+                            )
+                            can_save_failed_episode = True
+
                         can_save_episode = episode_success or (not episode_success and can_save_failed_episode)
 
                         if can_save_episode:
@@ -547,6 +601,7 @@ def run(TASK_ENV, args):
                         )
 
                     except UnStableError as e:
+                        attempts += 1
                         print(" -------------")
                         print(f"regenerate trajectory episode {episode_idx} fail! (seed = {candidate_seed})")
                         print("Error: ", e)
@@ -556,6 +611,7 @@ def run(TASK_ENV, args):
                         TASK_ENV.close_env()
                         time.sleep(0.3)
                     except Exception as e:
+                        attempts += 1
                         print(" -------------")
                         print(f"regenerate trajectory episode {episode_idx} fail! (seed = {candidate_seed})")
                         print("Error: ", e)
@@ -565,7 +621,19 @@ def run(TASK_ENV, args):
                         TASK_ENV.close_env()
                         time.sleep(1)
 
-                    if max_retry_no_success is not None and fail_count >= max_retry_no_success:
+                    quota_is_full = (
+                        collect_failed_data
+                        and _count_failed(episode_statuses) >= max_failed_episodes
+                    )
+                    if quota_is_full and not allow_failed_fill and attempts >= success_retry_limit:
+                        enable_failed_fill(
+                            f"episode {episode_idx} trajectory regeneration could not find success"
+                        )
+                    elif (
+                        not allow_failed_fill
+                        and max_retry_no_success is not None
+                        and fail_count >= max_retry_no_success
+                    ):
                         raise RuntimeError(
                             f"Reached {fail_count} failed attempts while regenerating "
                             f"episode {episode_idx} for task {args['task_name']}."
@@ -591,57 +659,73 @@ def run(TASK_ENV, args):
             )
 
         for episode_idx in range(st_idx, target_episode_num):
-            print(f"\033[34mTask name: {args['task_name']}\033[0m")
+            while True:
+                print(f"\033[34mTask name: {args['task_name']}\033[0m")
 
-            if episode_already_done(episode_idx):
-                print(f"Episode {episode_idx} already complete, skip.")
-                continue
+                if episode_already_done(episode_idx):
+                    print(f"Episode {episode_idx} already complete, skip.")
+                    break
 
-            regenerate_missing_traj_data(episode_idx)
+                regenerate_missing_traj_data(episode_idx)
 
-            TASK_ENV.setup_demo(now_ep_num=episode_idx, seed=seed_list[episode_idx], **args)
+                TASK_ENV.setup_demo(now_ep_num=episode_idx, seed=seed_list[episode_idx], **args)
 
-            traj_data = TASK_ENV.load_tran_data(episode_idx)
-            args["left_joint_path"] = traj_data["left_joint_path"]
-            args["right_joint_path"] = traj_data["right_joint_path"]
-            TASK_ENV.set_path_lst(args)
+                traj_data = TASK_ENV.load_tran_data(episode_idx)
+                args["left_joint_path"] = traj_data["left_joint_path"]
+                args["right_joint_path"] = traj_data["right_joint_path"]
+                TASK_ENV.set_path_lst(args)
 
-            info_file_path = os.path.join(args["save_path"], "scene_info.json")
+                info_file_path = os.path.join(args["save_path"], "scene_info.json")
 
-            if not os.path.exists(info_file_path):
+                if not os.path.exists(info_file_path):
+                    with open(info_file_path, "w", encoding="utf-8") as file:
+                        json.dump({}, file, ensure_ascii=False)
+
+                with open(info_file_path, "r", encoding="utf-8") as file:
+                    info_db = json.load(file)
+
+                info = TASK_ENV.play_once()
+                episode_success = bool(TASK_ENV.plan_success and TASK_ENV.check_success())
+                info["success"] = episode_success
+                info["result"] = "success" if episode_success else "fail"
+                info_db[f"episode_{episode_idx}"] = info
+
                 with open(info_file_path, "w", encoding="utf-8") as file:
-                    json.dump({}, file, ensure_ascii=False)
+                    json.dump(info_db, file, ensure_ascii=False, indent=4)
 
-            with open(info_file_path, "r", encoding="utf-8") as file:
-                info_db = json.load(file)
-
-            info = TASK_ENV.play_once()
-            episode_success = bool(TASK_ENV.plan_success and TASK_ENV.check_success())
-            info["success"] = episode_success
-            info["result"] = "success" if episode_success else "fail"
-            info_db[f"episode_{episode_idx}"] = info
-
-            with open(info_file_path, "w", encoding="utf-8") as file:
-                json.dump(info_db, file, ensure_ascii=False, indent=4)
-
-            TASK_ENV.close_env(clear_cache=((episode_idx + 1) % clear_cache_freq == 0))
-            max_frames = None if episode_success else failed_episode_max_frames
-            failed_count_after_update = _failed_count_after_update(episode_statuses, episode_idx, episode_success)
-            if not episode_success and failed_count_after_update > max_failed_episodes:
-                TASK_ENV.remove_data_cache()
-                raise AssertionError(
-                    f"Collect Error: failed episode quota exceeded "
-                    f"({failed_count_after_update}>{max_failed_episodes})"
+                TASK_ENV.close_env(clear_cache=((episode_idx + 1) % clear_cache_freq == 0))
+                max_frames = None if episode_success else failed_episode_max_frames
+                failed_count_after_update = _failed_count_after_update(
+                    episode_statuses, episode_idx, episode_success
                 )
-            TASK_ENV.merge_pkl_to_hdf5_video(episode_success=episode_success, max_frames=max_frames)
-            TASK_ENV.remove_data_cache()
-            _set_episode_status(episode_statuses, episode_idx, seed_list[episode_idx], episode_success)
-            _save_episode_statuses(args["save_path"], episode_statuses)
-            hdf5_path = os.path.join(args["save_path"], "data", f"episode{episode_idx}.hdf5")
-            _postprocess_episode(args, episode_idx, hdf5_path)
+                if (
+                    not episode_success
+                    and failed_count_after_update > max_failed_episodes
+                    and not allow_failed_fill
+                ):
+                    TASK_ENV.remove_data_cache()
+                    print(
+                        f"WARN: episode {episode_idx} failed and would exceed failed episode quota "
+                        f"({failed_count_after_update}>{max_failed_episodes}); resampling for success."
+                    )
+                    regenerate_missing_traj_data(
+                        episode_idx,
+                        force=True,
+                        initial_failed_attempts=1,
+                    )
+                    continue
 
-            if not episode_success and not collect_failed_data:
-                raise AssertionError("Collect Error")
+                TASK_ENV.merge_pkl_to_hdf5_video(episode_success=episode_success, max_frames=max_frames)
+                TASK_ENV.remove_data_cache()
+                _set_episode_status(episode_statuses, episode_idx, seed_list[episode_idx], episode_success)
+                _save_episode_statuses(args["save_path"], episode_statuses)
+                hdf5_path = os.path.join(args["save_path"], "data", f"episode{episode_idx}.hdf5")
+                _postprocess_episode(args, episode_idx, hdf5_path)
+
+                if not episode_success and not collect_failed_data:
+                    raise AssertionError("Collect Error")
+
+                break
 
         command = f"cd description && bash gen_episode_instructions.sh {args['task_name']} {args['task_config']} {args['language_num']}"
         os.system(command)

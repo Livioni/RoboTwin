@@ -7,12 +7,23 @@ import shutil
 from .images_to_video import images_to_video
 
 
+def _rgb_to_cv2_encoding_order(img):
+    if img.ndim == 3 and img.shape[2] == 3:
+        return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    if img.ndim == 3 and img.shape[2] == 4:
+        return cv2.cvtColor(img, cv2.COLOR_RGBA2BGRA)
+    return img
+
+
 def images_encoding(imgs):
     encode_data = []
     padded_data = []
     max_len = 0
     for i in range(len(imgs)):
-        success, encoded_image = cv2.imencode(".jpg", imgs[i])
+        img = _rgb_to_cv2_encoding_order(imgs[i])
+        success, encoded_image = cv2.imencode(".jpg", img)
+        if not success:
+            raise ValueError(f"Failed to encode image at index {i}")
         jpeg_data = encoded_image.tobytes()
         encode_data.append(jpeg_data)
         max_len = max(max_len, len(jpeg_data))

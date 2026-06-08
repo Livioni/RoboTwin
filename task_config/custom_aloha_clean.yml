@@ -1,19 +1,19 @@
 # if you want to modify the config, please check the following tutorial first:
 # https://robotwin-platform.github.io/doc/usage/configurations.html
 render_freq: 0
-episode_num: 3
+episode_num: 2
 use_seed: false
 save_freq: 10
 embodiment: [aloha-agilex]
 language_num: 100
 domain_randomization:
-  random_background: true
-  cluttered_table: true
-  clean_background_rate: 0.2
-  random_head_camera_dis: 0.05
-  random_table_height: 0.1
-  random_light: true
-  crazy_random_light_rate: 0.1
+  random_background: false
+  cluttered_table: false
+  clean_background_rate: 1
+  random_head_camera_dis: 0
+  random_table_height: 0
+  random_light: false
+  crazy_random_light_rate: 0
 camera:
   head_camera_type: D435
   wrist_camera_type: D435
