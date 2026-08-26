@@ -654,6 +654,38 @@ def episode_output_dir_from_path(input_path: str, hdf5_path: str, output_dir: st
         parts.remove("data")
     return os.path.join(output_dir, *parts)
 
+def instruction_json_path_from_hdf5(hdf5_path: str) -> Optional[str]:
+    """根据 episodeN.hdf5 查找对应的 instructions/episodeN.json。"""
+    hdf5_dir = os.path.dirname(os.path.abspath(hdf5_path))
+    parent_dir = os.path.dirname(hdf5_dir)
+    episode_name = episode_name_from_path(hdf5_path)
+
+    candidates = [
+        os.path.join(parent_dir, "instructions", f"{episode_name}.json"),
+        os.path.join(hdf5_dir, "instructions", f"{episode_name}.json"),
+        os.path.join(hdf5_dir, f"{episode_name}.json"),
+        os.path.join(hdf5_dir, "instructions.json"),
+    ]
+
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+def copy_episode_instruction_json(hdf5_path: str, episode_output_dir: str) -> Optional[str]:
+    instruction_json = instruction_json_path_from_hdf5(hdf5_path)
+    if instruction_json is None:
+        print(f"WARN: 未找到对应 instructions json: {hdf5_path}")
+        return None
+
+    dst = os.path.join(episode_output_dir, "instructions.json")
+    shutil.copy2(instruction_json, dst)
+    return instruction_json
+
 def process_one_episode(
     hdf5_path: str,
     episode_output_dir: str,
@@ -674,6 +706,7 @@ def process_one_episode(
     if os.path.exists(episode_output_dir) and os.listdir(episode_output_dir) and overwrite:
         shutil.rmtree(episode_output_dir)
     os.makedirs(episode_output_dir, exist_ok=True)
+    instruction_json = copy_episode_instruction_json(hdf5_path, episode_output_dir)
 
     with h5py.File(hdf5_path, "r") as f:
         episode_success = episode_success_from_hdf5(f)
@@ -713,6 +746,8 @@ def process_one_episode(
             "save_both_arms": bool(save_both_arms),
             "success": episode_success,
             "result": ("success" if episode_success else "fail") if episode_success is not None else None,
+            "source_instruction_json": os.path.abspath(instruction_json) if instruction_json else None,
+            "instruction_json": "instructions.json" if instruction_json else None,
             "missing_camera_fields": {},
         }
         for cam_name in selected_cams:

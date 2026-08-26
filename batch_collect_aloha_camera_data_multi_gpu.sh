@@ -44,7 +44,7 @@ Each GPU runs one task at a time, then continues with the next assigned task.
 EOF
 }
 
-GPUS="${GPUS:-0 1}"
+GPUS="${GPUS:-0 2 3 4 5}"
 CONFIG="${CONFIG:-custom_aloha}"
 SAVE_ROOT="${SAVE_ROOT:-./datasets/robotwin_aloha}"
 RAW_ROOT="${RAW_ROOT:-./data}"

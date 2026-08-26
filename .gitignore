@@ -12,6 +12,8 @@ eval_video/
 **/.DS_Store
 extracted_data/
 /datasets
+/instructions
+
 
 # eval result
 eval_result/
