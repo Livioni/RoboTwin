@@ -123,6 +123,7 @@ For custom task configs, domain randomization, or embodiment setups, collect dat
 ```
 bash collect_data.sh ${task_name} ${task_config} ${gpu_id}
 # Example: bash collect_data.sh beat_block_hammer demo_randomized 0
+# RGB-D + head/wrist calibration: bash collect_data.sh beat_block_hammer 3d_dataset 0
 ```
 
 Collected demonstrations are saved directly in the XPolicyLab trajectory format — no extra conversion step is needed:
@@ -146,7 +147,7 @@ Many XPolicyLab policies train on LeRobot datasets. After you have XPolicyLab-fo
 
 Patterns are `<task_config>.<task>.<embodiment>` and may use `*` wildcards. They resolve against `data/` next to the RoboTwin root (for example `demo_clean.*.aloha_agilex`). Keep `--data_type` as the default `RoboDojo` — RoboTwin XPolicyLab trajectories share that HDF5 layout.
 
-Run in an environment that already has the matching LeRobot package (v2.1 vs v3.0). Conversion writes under `HF_LEROBOT_HOME` (default `~/.cache/huggingface/lerobot`); point it at a large disk if needed:
+Run in an environment that already has the matching LeRobot package. The v3 converter now requires Python >= 3.12 and LeRobot >= 0.6.0 so it can use native 12-bit depth-video encoding. Conversion writes under `HF_LEROBOT_HOME` (default `~/.cache/huggingface/lerobot`); point it at a large disk if needed:
 
 ```bash
 export HF_LEROBOT_HOME=/path/with/enough/space/lerobot
@@ -157,11 +158,13 @@ python XPolicyLab/scripts/transform_lerobot_v21_format.py \
   --repo_id robotwin_demo_clean_aloha_agilex \
   --max_episode 50
 
-# LeRobot v3.0 — same selection
+# LeRobot v3.0 RGB-D plus per-frame calibration
 python XPolicyLab/scripts/transform_lerobot_v30_format.py \
-  "demo_clean.*.aloha_agilex" \
-  --repo_id robotwin_demo_clean_aloha_agilex_v30 \
-  --max_episode 50
+  "3d_dataset.*.aloha_agilex" \
+  --repo_id robotwin_3d_dataset_aloha_agilex_v30 \
+  --max_episode 50 \
+  --include_depth \
+  --include_camera_calibration
 
 # Single task
 python XPolicyLab/scripts/transform_lerobot_v21_format.py \
@@ -169,7 +172,7 @@ python XPolicyLab/scripts/transform_lerobot_v21_format.py \
   --repo_id beat_block_hammer_demo_clean
 ```
 
-Useful flags: `--repo_id` (output dataset name), `--max_episode` (cap episodes per task/embodiment), `--resolution HxW` or `--image_height` / `--image_width` (default: auto-detect; RoboTwin is often `240x320`). Output lands at `${HF_LEROBOT_HOME}/<repo_id>`.
+Useful flags: `--repo_id` (output dataset name), `--max_episode` (cap episodes per task/embodiment), `--resolution HxW` or `--image_height` / `--image_width` (default: auto-detect; RoboTwin is often `240x320`), `--include_depth`, `--include_camera_calibration`, and `--depth_max` (metres, default `5.0`). Depth is supplied as `uint16` millimetres and encoded as HEVC `gray12le`; invalid 0 remains 0 because `--depth_min` is fixed at 0. Output lands at `${HF_LEROBOT_HOME}/<repo_id>`. The v3 converter refuses to overwrite an existing output directory; choose a new `--repo_id`.
 
 ## 4. Modify Task Config
 ☝️ See [RoboTwin 2.0 Tasks Configurations Doc](https://robotwin-platform.github.io/doc/usage/configurations.html) for more details.

@@ -109,6 +109,49 @@ def _to_4x4(values):
     return values
 
 
+def _matrix_sequence(values, matrix_shape, frame_num, field_name):
+    values = np.asarray(values, dtype=np.float32)
+    if values.shape == matrix_shape:
+        values = np.repeat(values[None], frame_num, axis=0)
+    if values.ndim != 3 or values.shape[1:] != matrix_shape:
+        raise ValueError(
+            f"{field_name} must have shape {matrix_shape} or (T, {matrix_shape[0]}, {matrix_shape[1]}), "
+            f"got {values.shape}"
+        )
+    if len(values) != frame_num:
+        raise ValueError(
+            f"{field_name} has {len(values)} frames, expected {frame_num}"
+        )
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"{field_name} contains NaN or infinity")
+    return values
+
+
+def _camera_calibration(source_camera, frame_num, camera_name):
+    if "intrinsic_cv" not in source_camera:
+        raise ValueError(f"{camera_name} is missing intrinsic_cv")
+    if "extrinsic_cv" not in source_camera:
+        raise ValueError(f"{camera_name} is missing extrinsic_cv")
+
+    intrinsic = _matrix_sequence(
+        source_camera["intrinsic_cv"], (3, 3), frame_num, f"{camera_name}.intrinsic_cv"
+    )
+    extrinsic = _matrix_sequence(
+        _to_4x4(source_camera["extrinsic_cv"]),
+        (4, 4),
+        frame_num,
+        f"{camera_name}.extrinsic_cv",
+    )
+    expected_last_row = np.asarray([0, 0, 0, 1], dtype=np.float32)
+    if not np.allclose(extrinsic[:, 3, :], expected_last_row, atol=1e-5):
+        raise ValueError(f"{camera_name}.extrinsic_cv has an invalid homogeneous row")
+    try:
+        camera_pose = np.linalg.inv(extrinsic).astype(np.float32)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(f"{camera_name}.extrinsic_cv is not invertible") from exc
+    return intrinsic, extrinsic, camera_pose
+
+
 def create_xpolicylab_hdf5(data, hdf5_path, instructions, frequency):
     joints = data["joint_action"]
     frame_num = len(joints["left_arm"])
@@ -166,7 +209,12 @@ def create_xpolicylab_hdf5(data, hdf5_path, instructions, frequency):
                 continue
             source_camera = observations[source_name]
             target_camera = vision.create_group(target_name)
-            colors = np.asarray(source_camera["rgb"])[:-1]
+            colors = np.asarray(source_camera["rgb"])
+            if len(colors) != frame_num:
+                raise ValueError(
+                    f"{source_name}.rgb has {len(colors)} frames, expected {frame_num}"
+                )
+            colors = colors[:-1]
             encoded_colors, max_len = images_encoding(colors)
             target_camera.create_dataset(
                 "colors", data=encoded_colors, dtype=f"S{max_len}"
@@ -176,27 +224,52 @@ def create_xpolicylab_hdf5(data, hdf5_path, instructions, frequency):
             )
 
             if "depth" in source_camera:
-                target_camera.create_dataset(
-                    "depths", data=np.asarray(source_camera["depth"])[:-1]
+                depths = np.asarray(source_camera["depth"])
+                if depths.ndim == 4 and depths.shape[-1] == 1:
+                    depths = depths[..., 0]
+                if depths.ndim != 3:
+                    raise ValueError(
+                        f"{source_name}.depth must have shape (T, H, W), got {depths.shape}"
+                    )
+                if len(depths) != frame_num:
+                    raise ValueError(
+                        f"{source_name}.depth has {len(depths)} frames, expected {frame_num}"
+                    )
+                depths = np.clip(np.rint(depths), 0, 65535).astype(np.uint16)[:-1]
+                depth_dataset = target_camera.create_dataset(
+                    "depths",
+                    data=depths,
+                    compression="gzip",
+                    compression_opts=4,
+                    shuffle=True,
+                    chunks=(1, *depths.shape[1:]),
                 )
+                depth_dataset.attrs["unit"] = "millimeter"
+                depth_dataset.attrs["invalid_value"] = np.uint16(0)
 
-            intrinsic = source_camera.get(
-                "intrinsic_cv", source_camera.get("intrinsic_matrix")
+            intrinsic, extrinsic, camera_pose = _camera_calibration(
+                source_camera, frame_num, source_name
             )
-            if intrinsic is not None:
-                target_camera.create_dataset(
-                    "intrinsic_matrix", data=np.asarray(intrinsic)[:-1]
-                )
+            intrinsic_dataset = target_camera.create_dataset(
+                "intrinsic_matrix", data=intrinsic[:-1]
+            )
+            intrinsic_dataset.attrs["convention"] = "OpenCV pinhole; pixel coordinates"
 
-            extrinsic = source_camera.get("cam2world_gl")
-            if extrinsic is None:
-                extrinsic = source_camera.get("extrinsic_cv")
-            if extrinsic is None:
-                extrinsic = source_camera.get("extrinsics_matrix")
-            if extrinsic is not None:
-                target_camera.create_dataset(
-                    "extrinsics_matrix", data=_to_4x4(extrinsic)[:-1]
-                )
+            extrinsic_dataset = target_camera.create_dataset(
+                "extrinsic_matrix", data=extrinsic[:-1]
+            )
+            extrinsic_dataset.attrs["transform"] = "world_to_camera"
+            extrinsic_dataset.attrs["camera_coordinates"] = (
+                "OpenCV: +x right, +y down, +z forward"
+            )
+
+            pose_dataset = target_camera.create_dataset(
+                "camera_pose_matrix", data=camera_pose[:-1]
+            )
+            pose_dataset.attrs["transform"] = "camera_to_world"
+            pose_dataset.attrs["camera_coordinates"] = (
+                "OpenCV: +x right, +y down, +z forward"
+            )
 
     return frame_num - 1
 

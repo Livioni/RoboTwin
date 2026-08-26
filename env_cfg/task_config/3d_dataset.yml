@@ -1,7 +1,7 @@
 # if you want to modify the config, please check the following tutorial first:
 # https://robotwin-platform.github.io/doc/usage/configurations.html
 render_freq: 0
-episode_num: 1
+episode_num: 10
 use_seed: false
 save_freq: 15
 embodiment: [aloha-agilex]
@@ -20,10 +20,16 @@ camera:
   wrist_camera_type: D435
   collect_head_camera: true
   collect_wrist_camera: true
+  # Only these cameras are persisted in the dataset. Other scene cameras may
+  # still exist for rendering/evaluation, but are excluded from observations.
+  data_camera_names:
+    - head_camera
+    - left_camera
+    - right_camera
 data_type:
   rgb: true
   third_view: false
-  depth: false
+  depth: true
   pointcloud: false
   observer: false
   endpose: true

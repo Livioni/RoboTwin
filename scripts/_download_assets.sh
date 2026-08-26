@@ -1,5 +1,5 @@
 cd assets
-python _download.py
+# python _download.py
 
 # background_texture
 unzip background_texture.zip

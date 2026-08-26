@@ -65,6 +65,10 @@ class Base_Task(gym.Env):
         self.ep_num = kwags.get("now_ep_num", 0)
         self.render_freq = kwags.get("render_freq", 10)
         self.data_type = kwags.get("data_type", None)
+        configured_data_cameras = kwags.get("camera", {}).get("data_camera_names")
+        self.data_camera_names = (
+            tuple(configured_data_cameras) if configured_data_cameras else None
+        )
         self.save_data = kwags.get("save_data", False)
         self.dual_arm = kwags.get("dual_arm", True)
         self.eval_mode = kwags.get("eval_mode", False)
@@ -444,12 +448,26 @@ class Base_Task(gym.Env):
             "endpose": {},
         }
 
-        pkl_dic["observation"] = self.cameras.get_config()
+        camera_config = self.cameras.get_config()
+        if self.data_camera_names is not None:
+            missing_cameras = [
+                name for name in self.data_camera_names if name not in camera_config
+            ]
+            if missing_cameras:
+                raise ValueError(
+                    "Configured data cameras are unavailable: "
+                    + ", ".join(missing_cameras)
+                )
+            camera_config = {
+                name: camera_config[name] for name in self.data_camera_names
+            }
+        pkl_dic["observation"] = camera_config
         # rgb
         if self.data_type.get("rgb", False):
             rgb = self.cameras.get_rgb()
             for camera_name in rgb.keys():
-                pkl_dic["observation"][camera_name].update(rgb[camera_name])
+                if camera_name in pkl_dic["observation"]:
+                    pkl_dic["observation"][camera_name].update(rgb[camera_name])
 
         if self.data_type.get("third_view", False):
             third_view_rgb = self.cameras.get_observer_rgb()
@@ -458,17 +476,20 @@ class Base_Task(gym.Env):
         if self.data_type.get("mesh_segmentation", False):
             mesh_segmentation = self.cameras.get_segmentation(level="mesh")
             for camera_name in mesh_segmentation.keys():
-                pkl_dic["observation"][camera_name].update(mesh_segmentation[camera_name])
+                if camera_name in pkl_dic["observation"]:
+                    pkl_dic["observation"][camera_name].update(mesh_segmentation[camera_name])
         # actor_segmentation
         if self.data_type.get("actor_segmentation", False):
             actor_segmentation = self.cameras.get_segmentation(level="actor")
             for camera_name in actor_segmentation.keys():
-                pkl_dic["observation"][camera_name].update(actor_segmentation[camera_name])
+                if camera_name in pkl_dic["observation"]:
+                    pkl_dic["observation"][camera_name].update(actor_segmentation[camera_name])
         # depth
         if self.data_type.get("depth", False):
             depth = self.cameras.get_depth()
             for camera_name in depth.keys():
-                pkl_dic["observation"][camera_name].update(depth[camera_name])
+                if camera_name in pkl_dic["observation"]:
+                    pkl_dic["observation"][camera_name].update(depth[camera_name])
         # endpose
         if self.data_type.get("endpose", False):
             norm_gripper_val = [

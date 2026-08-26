@@ -298,11 +298,9 @@ class Camera:
         def _get_config(camera):
             camera_intrinsic_cv = camera.get_intrinsic_matrix()
             camera_extrinsic_cv = camera.get_extrinsic_matrix()
-            camera_model_matrix = camera.get_model_matrix()
             return {
                 "intrinsic_cv": camera_intrinsic_cv,
                 "extrinsic_cv": camera_extrinsic_cv,
-                "cam2world_gl": camera_model_matrix,
             }
 
         if self.collect_wrist_camera:
@@ -414,13 +412,14 @@ class Camera:
         def _get_depth(camera):
             position = camera.get_picture("Position")
             depth = -position[..., 2]
-            depth_image = (depth * 1000.0).astype(np.float64)
-            return depth_image
+            return np.clip(np.rint(depth * 1000.0), 0, 65535).astype(np.uint16)
 
         def _get_sensor_depth(sensor):
             depth = sensor.get_depth()
-            depth = (depth * 1000.0).astype(np.float64)
-            return depth
+            return np.clip(np.rint(depth * 1000.0), 0, 65535).astype(np.uint16)
+
+        def _mask_invalid(depth, rgba_image):
+            return np.where(rgba_image[..., 3] > 0, depth, 0).astype(np.uint16)
 
         res = {}
         rgba = self.get_rgba()
@@ -428,21 +427,25 @@ class Camera:
         if self.collect_wrist_camera:
             res["left_camera"] = {}
             res["right_camera"] = {}
-            res["left_camera"]["depth"] = _get_depth(self.left_camera)
-            res["right_camera"]["depth"] = _get_depth(self.right_camera)
-            res["left_camera"]["depth"] *= rgba["left_camera"]["rgba"][:, :, 3] / 255
-            res["right_camera"]["depth"] *= rgba["right_camera"]["rgba"][:, :, 3] / 255
+            res["left_camera"]["depth"] = _mask_invalid(
+                _get_depth(self.left_camera), rgba["left_camera"]["rgba"]
+            )
+            res["right_camera"]["depth"] = _mask_invalid(
+                _get_depth(self.right_camera), rgba["right_camera"]["rgba"]
+            )
         
         for camera, camera_name in zip(self.static_camera_list, self.static_camera_name):
             if camera_name == "head_camera":
                 if self.collect_head_camera:
                     res[camera_name] = {}
-                    res[camera_name]["depth"] = _get_depth(camera)
-                    res[camera_name]["depth"] *= rgba[camera_name]["rgba"][:, :, 3] / 255
+                    res[camera_name]["depth"] = _mask_invalid(
+                        _get_depth(camera), rgba[camera_name]["rgba"]
+                    )
             else:
                 res[camera_name] = {}
-                res[camera_name]["depth"] = _get_depth(camera)
-                res[camera_name]["depth"] *= rgba[camera_name]["rgba"][:, :, 3] / 255
+                res[camera_name]["depth"] = _mask_invalid(
+                    _get_depth(camera), rgba[camera_name]["rgba"]
+                )
         # res['head_sensor']['depth'] = _get_sensor_depth(self.head_sensor)
 
         return res
