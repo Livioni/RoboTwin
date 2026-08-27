@@ -123,7 +123,7 @@ For custom task configs, domain randomization, or embodiment setups, collect dat
 ```
 bash collect_data.sh ${task_name} ${task_config} ${gpu_id}
 # Example: bash collect_data.sh beat_block_hammer demo_randomized 0
-# RGB-D + head/wrist calibration: bash collect_data.sh beat_block_hammer 3d_dataset 0
+# RGB-D + head/wrist/observer calibration: bash collect_data.sh beat_block_hammer 3d_aloha_dataset 0
 ```
 
 Collected demonstrations are saved directly in the XPolicyLab trajectory format — no extra conversion step is needed:
@@ -160,9 +160,10 @@ python XPolicyLab/scripts/transform_lerobot_v21_format.py \
 
 # LeRobot v3.0 RGB-D plus per-frame calibration
 python XPolicyLab/scripts/transform_lerobot_v30_format.py \
-  "3d_dataset.*.aloha_agilex" \
+  "3d_aloha_dataset.*.aloha_agilex" \
   --repo_id robotwin_3d_dataset_aloha_agilex_v30 \
   --max_episode 50 \
+  --include_third_view \
   --include_depth \
   --include_camera_calibration
 

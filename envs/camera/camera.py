@@ -57,6 +57,9 @@ class Camera:
 
         self.collect_head_camera = kwags["camera"].get("collect_head_camera", True)
         self.collect_wrist_camera = kwags["camera"].get("collect_wrist_camera", True)
+        self.collect_observer_camera = kwags.get("data_type", {}).get(
+            "third_view", False
+        )
 
         # embodiment = kwags.get('embodiment')
         # embodiment_config_path = os.path.join(CONFIGS_PATH, '_embodiment_config.yml')
@@ -276,6 +279,9 @@ class Camera:
             self.left_camera.take_picture()
             self.right_camera.take_picture()
 
+        if self.collect_observer_camera:
+            self.observer_camera.take_picture()
+
         for camera in self.static_camera_list:
             camera.take_picture()
 
@@ -306,6 +312,9 @@ class Camera:
         if self.collect_wrist_camera:
             res["left_camera"] = _get_config(self.left_camera)
             res["right_camera"] = _get_config(self.right_camera)
+
+        if self.collect_observer_camera:
+            res["front_camera"] = _get_config(self.observer_camera)
 
         for camera, camera_name in zip(self.static_camera_list, self.static_camera_name):
             if camera_name == "head_camera":
@@ -347,6 +356,11 @@ class Camera:
             res["right_camera"] = {}
             res["left_camera"]["rgba"] = _get_rgba(self.left_camera)
             res["right_camera"]["rgba"] = _get_rgba(self.right_camera)
+
+        if self.collect_observer_camera:
+            res["front_camera"] = {
+                "rgba": _get_rgba(self.observer_camera),
+            }
 
         for camera, camera_name in zip(self.static_camera_list, self.static_camera_name):
             if camera_name == "head_camera":
@@ -396,6 +410,13 @@ class Camera:
             res["left_camera"][f"{level}_segmentation"] = _get_segmentation(self.left_camera, level=level)
             res["right_camera"][f"{level}_segmentation"] = _get_segmentation(self.right_camera, level=level)
 
+        if self.collect_observer_camera:
+            res["front_camera"] = {
+                f"{level}_segmentation": _get_segmentation(
+                    self.observer_camera, level=level
+                )
+            }
+
         for camera, camera_name in zip(self.static_camera_list, self.static_camera_name):
             if camera_name == "head_camera":
                 if self.collect_head_camera:
@@ -433,7 +454,15 @@ class Camera:
             res["right_camera"]["depth"] = _mask_invalid(
                 _get_depth(self.right_camera), rgba["right_camera"]["rgba"]
             )
-        
+
+        if self.collect_observer_camera:
+            res["front_camera"] = {
+                "depth": _mask_invalid(
+                    _get_depth(self.observer_camera),
+                    rgba["front_camera"]["rgba"],
+                )
+            }
+
         for camera, camera_name in zip(self.static_camera_list, self.static_camera_name):
             if camera_name == "head_camera":
                 if self.collect_head_camera:

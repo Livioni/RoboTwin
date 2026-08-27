@@ -37,6 +37,7 @@ CAMERA_NAME_MAP = {
     "head_camera": "cam_head",
     "left_camera": "cam_left_wrist",
     "right_camera": "cam_right_wrist",
+    "front_camera": "cam_third_view",
 }
 
 
@@ -1167,7 +1168,7 @@ def convert_vision(observation: Mapping[str, Any]) -> dict[str, Any]:
         if robotwin_name in source:
             vision[xpolicylab_name] = convert_camera(source[robotwin_name])
 
-    if "third_view_rgb" in observation:
+    if "third_view_rgb" in observation and "cam_third_view" not in vision:
         color = np.asarray(observation["third_view_rgb"])
         vision["cam_third_view"] = {
             "color": color,

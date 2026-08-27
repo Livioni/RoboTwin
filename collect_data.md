@@ -5,7 +5,13 @@
  采集命令：
 
 ```bash
-  bash collect_data.sh adjust_bottle 3d_dataset 0
+  bash collect_data.sh adjust_bottle 3d_aloha_dataset 0
+```
+
+批量采集全部 50 个任务（参数为 GPU ID）：
+
+```bash
+bash batch_collect_3d_aloha.sh 0
 ```
 
   转换命令：
@@ -15,9 +21,10 @@ conda activate xpolicy
 export HF_LEROBOT_HOME=/home/shengyu/Documents/PENG/github/RoboTwin/lerobot
 
 python XPolicyLab/scripts/transform_lerobot_v30_format.py \
-    "3d_dataset.*.aloha_agilex" \
+    "3d_aloha_dataset.*.aloha_agilex" \
     --repo_id robotwin_3d_dataset_aloha_agilex_v30 \
     --max_episode 50 \
+    --include_third_view \
     --include_depth \
     --include_camera_calibration
 ```
