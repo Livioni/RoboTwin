@@ -50,3 +50,10 @@ python XPolicyLab/scripts/transform_lerobot_v21_format.py \
   --repo_id beat_block_hammer_demo_clean
 
 ```
+
+```bash
+conda run -n RoboTwin python scripts/convert_3d_aloha_to_4d.py \
+  --input-root data/3d_aloha_dataset \
+  --output-root 4d_datasets \
+  --workers 8
+```

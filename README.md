@@ -175,12 +175,37 @@ python XPolicyLab/scripts/transform_lerobot_v21_format.py \
 
 Useful flags: `--repo_id` (output dataset name), `--max_episode` (cap episodes per task/embodiment), `--resolution HxW` or `--image_height` / `--image_width` (default: auto-detect; RoboTwin is often `240x320`), `--include_depth`, `--include_camera_calibration`, and `--depth_max` (metres, default `5.0`). Depth is supplied as `uint16` millimetres and encoded as HEVC `gray12le`; invalid 0 remains 0 because `--depth_min` is fixed at 0. Output lands at `${HF_LEROBOT_HOME}/<repo_id>`. The v3 converter refuses to overwrite an existing output directory; choose a new `--repo_id`.
 
-## 4. Modify Task Config
+## 4. Export RGB-D Episodes for 4D Training (Optional)
+
+To export `3d_aloha_dataset` into per-frame RGB/depth PNGs plus VGGT-style
+camera matrices and robot arrays, run:
+
+```bash
+conda run --no-capture-output -n RoboTwin \
+  python scripts/convert_3d_aloha_to_4d.py \
+  --input-root data/3d_aloha_dataset \
+  --output-root data/4d_aloha_dataset \
+  --workers 8
+```
+
+The output is organized as `<task>/episode_XXXXXXX/`. Each episode contains
+four view directories under `images/` and `depths/`, one `(3, 3)` intrinsic
+file and one `(T, 3, 4)` world-to-camera extrinsic file per view, plus
+`robot_state.npy` and `robot_action.npy` with shape `(T, 14)`. Depth PNGs are
+lossless `uint16` millimetres, where zero is invalid. See `metadata.json` in
+each episode for camera conventions and robot column ordering.
+
+Use `--tasks <task ...>`, `--episode-ids <id ...>`, or `--max-episodes N` for
+a subset. Existing outputs fail safely by default; use `--existing skip` to
+resume a large conversion. PNG output is substantially larger than the source
+JPEG-backed HDF5 data, so check free disk space before converting all tasks.
+
+## 5. Modify Task Config
 ☝️ See [RoboTwin 2.0 Tasks Configurations Doc](https://robotwin-platform.github.io/doc/usage/configurations.html) for more details.
 
 Task settings such as `demo_clean` and `demo_randomized` are stored in `env_cfg/task_config/`.
 
-## 5. Evaluate Policies via XPolicyLab
+## 6. Evaluate Policies via XPolicyLab
 
 All evaluation goes through `scripts/eval_policy.sh`. The policy adapter must exist under `XPolicyLab/policy/<policy_name>/` (see the [XPolicyLab policy catalog](https://github.com/XPolicyLab/XPolicyLab/tree/main/policy)).
 
