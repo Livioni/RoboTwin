@@ -199,6 +199,9 @@ Use `--tasks <task ...>`, `--episode-ids <id ...>`, or `--max-episodes N` for
 a subset. Existing outputs fail safely by default; use `--existing skip` to
 resume a large conversion. PNG output is substantially larger than the source
 JPEG-backed HDF5 data, so check free disk space before converting all tasks.
+Use `--delete-source` to delete each source episode HDF5 only after its output
+has been committed successfully. Failed conversions and episodes skipped by
+`--existing skip` keep their source files.
 
 ## 5. Modify Task Config
 ☝️ See [RoboTwin 2.0 Tasks Configurations Doc](https://robotwin-platform.github.io/doc/usage/configurations.html) for more details.

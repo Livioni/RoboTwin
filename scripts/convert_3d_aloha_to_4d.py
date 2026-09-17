@@ -65,6 +65,7 @@ class ConversionJob:
     extrinsics_convention: str
     existing: str
     png_compression: int
+    delete_source: bool
 
 
 def _episode_number(path: Path) -> int:
@@ -420,11 +421,18 @@ def convert_episode(job: ConversionJob) -> dict[str, Any]:
         shutil.rmtree(temporary_dir, ignore_errors=True)
         raise
 
+    # Delete only after the completed episode has been moved into its final
+    # destination. Failed conversions and outputs skipped via --existing skip
+    # therefore always retain their source HDF5 file.
+    if job.delete_source:
+        source_file.unlink()
+
     return {
         "status": "converted",
         "source": str(source_file),
         "output": str(output_dir),
         "num_frames": num_frames,
+        "source_deleted": job.delete_source,
     }
 
 
@@ -464,8 +472,11 @@ def discover_jobs(args: argparse.Namespace) -> list[ConversionJob]:
             ]
         if args.max_episodes is not None:
             episode_files = episode_files[: args.max_episodes]
+        # With --delete-source, a fully converted task legitimately has an
+        # empty data directory on a resumed run. Skip it and continue looking
+        # for source episodes in the remaining tasks.
         if not episode_files:
-            raise FileNotFoundError(f"No selected episode HDF5 files found in {data_dir}")
+            continue
 
         for source_file in episode_files:
             episode_id = _episode_number(source_file)
@@ -479,8 +490,14 @@ def discover_jobs(args: argparse.Namespace) -> list[ConversionJob]:
                     extrinsics_convention=args.extrinsics_convention,
                     existing=args.existing,
                     png_compression=args.png_compression,
+                    delete_source=args.delete_source,
                 )
             )
+    if not jobs:
+        selection = "selected " if args.tasks or args.episode_ids else ""
+        raise FileNotFoundError(
+            f"No {selection}episode HDF5 files found under {input_root}"
+        )
     return jobs
 
 
@@ -551,6 +568,14 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="0..9",
         help="OpenCV lossless PNG compression level",
     )
+    parser.add_argument(
+        "--delete-source",
+        action="store_true",
+        help=(
+            "Delete each source episode HDF5 only after its converted output "
+            "has been committed successfully; skipped and failed episodes are retained"
+        ),
+    )
     return parser
 
 
@@ -566,6 +591,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
 def run(jobs: Sequence[ConversionJob], workers: int) -> int:
     converted = 0
     skipped = 0
+    deleted = 0
 
     with tqdm(
         total=len(jobs),
@@ -576,14 +602,16 @@ def run(jobs: Sequence[ConversionJob], workers: int) -> int:
     ) as progress:
 
         def record_result(result: dict[str, Any]) -> None:
-            nonlocal converted, skipped
+            nonlocal converted, skipped, deleted
             if result["status"] == "converted":
                 converted += 1
+                deleted += int(result["source_deleted"])
             else:
                 skipped += 1
             progress.set_postfix(
                 converted=converted,
                 skipped=skipped,
+                deleted=deleted,
                 refresh=False,
             )
             progress.update()
@@ -597,7 +625,7 @@ def run(jobs: Sequence[ConversionJob], workers: int) -> int:
                 for future in as_completed(futures):
                     record_result(future.result())
 
-    print(f"Done: {converted} converted, {skipped} skipped.")
+    print(f"Done: {converted} converted, {skipped} skipped, {deleted} sources deleted.")
     return 0
 
 

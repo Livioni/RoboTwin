@@ -471,7 +471,7 @@ class Base_Task(gym.Env):
 
         if (
             self.data_type.get("third_view", False)
-            and "front_camera" not in pkl_dic["observation"]
+            and "observer_camera" not in pkl_dic["observation"]
         ):
             third_view_rgb = self.cameras.get_observer_rgb()
             pkl_dic["third_view_rgb"] = third_view_rgb

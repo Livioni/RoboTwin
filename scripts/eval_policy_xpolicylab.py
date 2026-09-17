@@ -37,6 +37,9 @@ CAMERA_NAME_MAP = {
     "head_camera": "cam_head",
     "left_camera": "cam_left_wrist",
     "right_camera": "cam_right_wrist",
+    "observer_camera": "cam_third_view",
+    # Backward compatibility for observations produced before observer_camera
+    # had a dedicated key.
     "front_camera": "cam_third_view",
 }
 
@@ -1165,7 +1168,7 @@ def convert_vision(observation: Mapping[str, Any]) -> dict[str, Any]:
     vision = {}
 
     for robotwin_name, xpolicylab_name in CAMERA_NAME_MAP.items():
-        if robotwin_name in source:
+        if robotwin_name in source and xpolicylab_name not in vision:
             vision[xpolicylab_name] = convert_camera(source[robotwin_name])
 
     if "third_view_rgb" in observation and "cam_third_view" not in vision:

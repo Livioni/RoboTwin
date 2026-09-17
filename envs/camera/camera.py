@@ -57,9 +57,10 @@ class Camera:
 
         self.collect_head_camera = kwags["camera"].get("collect_head_camera", True)
         self.collect_wrist_camera = kwags["camera"].get("collect_wrist_camera", True)
-        self.collect_observer_camera = kwags.get("data_type", {}).get(
+        data_type = kwags.get("data_type", {})
+        self.collect_observer_camera = data_type.get(
             "third_view", False
-        )
+        ) or data_type.get("observer", False)
 
         # embodiment = kwags.get('embodiment')
         # embodiment_config_path = os.path.join(CONFIGS_PATH, '_embodiment_config.yml')
@@ -314,7 +315,7 @@ class Camera:
             res["right_camera"] = _get_config(self.right_camera)
 
         if self.collect_observer_camera:
-            res["front_camera"] = _get_config(self.observer_camera)
+            res["observer_camera"] = _get_config(self.observer_camera)
 
         for camera, camera_name in zip(self.static_camera_list, self.static_camera_name):
             if camera_name == "head_camera":
@@ -358,7 +359,7 @@ class Camera:
             res["right_camera"]["rgba"] = _get_rgba(self.right_camera)
 
         if self.collect_observer_camera:
-            res["front_camera"] = {
+            res["observer_camera"] = {
                 "rgba": _get_rgba(self.observer_camera),
             }
 
@@ -411,7 +412,7 @@ class Camera:
             res["right_camera"][f"{level}_segmentation"] = _get_segmentation(self.right_camera, level=level)
 
         if self.collect_observer_camera:
-            res["front_camera"] = {
+            res["observer_camera"] = {
                 f"{level}_segmentation": _get_segmentation(
                     self.observer_camera, level=level
                 )
@@ -456,10 +457,10 @@ class Camera:
             )
 
         if self.collect_observer_camera:
-            res["front_camera"] = {
+            res["observer_camera"] = {
                 "depth": _mask_invalid(
                     _get_depth(self.observer_camera),
-                    rgba["front_camera"]["rgba"],
+                    rgba["observer_camera"]["rgba"],
                 )
             }
 

@@ -44,6 +44,9 @@ CAMERA_MAP = {
     "head_camera": "cam_head",
     "left_camera": "cam_left_wrist",
     "right_camera": "cam_right_wrist",
+    "observer_camera": "cam_third_view",
+    # Backward compatibility for datasets collected before observer_camera
+    # had a dedicated observation key.
     "front_camera": "cam_third_view",
 }
 
@@ -366,6 +369,8 @@ def convert_episode(
             raise KeyError("RoboTwin episode is missing /observation")
         vision = output.create_group("vision")
         for source_camera, target_camera in CAMERA_MAP.items():
+            if target_camera in vision:
+                continue
             _write_camera(source["observation"], vision, source_camera, target_camera, keep_last_frame)
 
         if len(vision.keys()) == 0:

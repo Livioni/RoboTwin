@@ -12,6 +12,9 @@ CAMERA_MAP = {
     "head_camera": "cam_head",
     "left_camera": "cam_left_wrist",
     "right_camera": "cam_right_wrist",
+    "observer_camera": "cam_third_view",
+    # Backward compatibility for datasets collected before observer_camera
+    # had a dedicated observation key.
     "front_camera": "cam_third_view",
 }
 
@@ -205,6 +208,8 @@ def create_xpolicylab_hdf5(data, hdf5_path, instructions, frequency):
         vision = f.create_group("vision")
         observations = data["observation"]
         for source_name, target_name in CAMERA_MAP.items():
+            if target_name in vision:
+                continue
             if source_name not in observations or "rgb" not in observations[source_name]:
                 continue
             source_camera = observations[source_name]

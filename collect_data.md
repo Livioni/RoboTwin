@@ -39,10 +39,13 @@ python XPolicyLab/scripts/transform_lerobot_v21_format.py \
   --max_episode 50
 
 # LeRobot v3.0 — same selection
-python XPolicyLab/scripts/transform_lerobot_v30_format.py \
-  "demo_clean.*.aloha_agilex" \
-  --repo_id robotwin_demo_clean_aloha_agilex_v30 \
-  --max_episode 50
+  python XPolicyLab/scripts/transform_lerobot_v30_format.py \
+    "3d_aloha_dataset.adjust_bottle.aloha_agilex" \
+    --repo_id robotwin_demo_clean_aloha_agilex_v30 \
+    --max_episode 1 \
+    --include_third_view \
+    --include_depth \
+    --include_camera_calibration
 
 # Single task
 python XPolicyLab/scripts/transform_lerobot_v21_format.py \
@@ -51,9 +54,16 @@ python XPolicyLab/scripts/transform_lerobot_v21_format.py \
 
 ```
 
+把原始的RoboTwin 采集的数据转化为4D数据
 ```bash
 conda run -n RoboTwin python scripts/convert_3d_aloha_to_4d.py \
-  --input-root data/3d_aloha_dataset \
-  --output-root 4d_datasets \
-  --workers 8
+  --input-root data/3d_aloha_random_dataset \
+  --output-root 4d_datasets/RoboTwin_random \
+  --workers 8 \
+  --delete-source
+```
+
+转换到head和third view坐标系下
+```bash
+python convert_robotwin_tcp.py 4d_datasets/RoboTwin_random --workers 8
 ```

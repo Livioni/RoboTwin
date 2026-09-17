@@ -26,7 +26,8 @@ camera:
     - head_camera
     - left_camera
     - right_camera
-    - front_camera
+    # Third-person camera across the table, facing the robot.
+    - observer_camera
 data_type:
   rgb: true
   third_view: true

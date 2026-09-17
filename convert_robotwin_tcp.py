@@ -4,15 +4,19 @@
 The output layout for every episode is::
 
     episode_xxxxxxx/
-      TCP/
+      TCP_head/
+        left_state.npy   # [T, 7]: x, y, z, roll, pitch, yaw, gripper_open
+        right_state.npy  # [T, 7]: x, y, z, roll, pitch, yaw, gripper_open
+        metadata.json
+      TCP_third/
         left_state.npy   # [T, 7]: x, y, z, roll, pitch, yaw, gripper_open
         right_state.npy  # [T, 7]: x, y, z, roll, pitch, yaw, gripper_open
         metadata.json
 
 Position is in metres, RPY is in radians, and ``gripper_open`` is binary
 (``1 = open``, ``0 = closed``).  Poses are expressed in the selected OpenCV
-camera frame (+X right, +Y down, +Z forward).  ``head_view`` is used by
-default.
+camera frame (+X right, +Y down, +Z forward).  Both ``head_view`` and
+``third_views`` are generated on every run.
 
 Examples:
     # Convert one episode.
@@ -20,7 +24,7 @@ Examples:
         4d_datasets/adjust_bottle/episode_0000000
 
     # Convert every task/episode below 4d_datasets using 8 workers.
-    conda run -n rerun python convert_robotwin_tcp.py 4d_datasets --workers 8
+    conda run -n rerun python convert_robotwin_tcp.py 4d_datasets/RoboTwin --workers 8
 """
 
 from __future__ import annotations
@@ -45,6 +49,10 @@ ARX5_WORLD_TO_BASE_ROTATION = np.array(
 ARX5_WORLD_TO_BASE_TRANSLATION = np.array([0.65, 0.0, 0.0], dtype=np.float64)
 ARX5_FINGERTIP_CONTACT_OFFSET_METERS = np.array(
     [0.062765, 0.0, -0.000610], dtype=np.float64
+)
+CAMERA_OUTPUTS = (
+    ("head_view", "TCP_head"),
+    ("third_views", "TCP_third"),
 )
 
 
@@ -71,7 +79,6 @@ class RobotModel:
 @dataclass(frozen=True)
 class ConversionConfig:
     urdf: Path
-    camera: str
     gripper_threshold: float
     overwrite: bool
 
@@ -316,15 +323,15 @@ def atomic_write_json(path: Path, value: object) -> None:
 
 
 def convert_episode(episode: Path, config: ConversionConfig) -> tuple[str, str]:
-    output_dir = episode / "TCP"
-    left_output = output_dir / "left_state.npy"
-    right_output = output_dir / "right_state.npy"
-    metadata_output = output_dir / "metadata.json"
-    if (
-        not config.overwrite
-        and left_output.is_file()
-        and right_output.is_file()
-        and metadata_output.is_file()
+    output_dirs = {
+        camera: episode / output_name for camera, output_name in CAMERA_OUTPUTS
+    }
+    if not config.overwrite and all(
+        all(
+            (output_dir / filename).is_file()
+            for filename in ("left_state.npy", "right_state.npy", "metadata.json")
+        )
+        for output_dir in output_dirs.values()
     ):
         return str(episode), "skipped"
 
@@ -339,52 +346,78 @@ def convert_episode(episode: Path, config: ConversionConfig) -> tuple[str, str]:
     if len(robot_state) == 0 or not np.all(np.isfinite(robot_state)):
         raise ValueError(f"{episode / 'robot_state.npy'} is empty or contains non-finite values")
 
-    camera_file = episode / "extrinsics" / f"{config.camera}.npy"
-    if not camera_file.is_file():
-        raise FileNotFoundError(f"Missing camera extrinsics: {camera_file}")
-    world_to_camera = homogeneous_extrinsics(camera_file, len(robot_state))
+    world_to_cameras: dict[str, np.ndarray] = {}
+    for camera, _ in CAMERA_OUTPUTS:
+        camera_file = episode / "extrinsics" / f"{camera}.npy"
+        if not camera_file.is_file():
+            raise FileNotFoundError(f"Missing camera extrinsics: {camera_file}")
+        world_to_cameras[camera] = homogeneous_extrinsics(
+            camera_file, len(robot_state)
+        )
 
     model = load_robot_model(str(config.urdf))
     base_to_world = np.linalg.inv(world_to_base_transform())
-    base_to_world_series = np.broadcast_to(base_to_world, world_to_camera.shape)
-    camera_from_base = world_to_camera @ base_to_world_series
-
-    outputs: dict[str, np.ndarray] = {}
+    base_tcp_poses: dict[str, np.ndarray] = {}
+    gripper_states: dict[str, np.ndarray] = {}
     for side, gripper_column in (("left", 6), ("right", 13)):
-        base_from_tcp = tcp_pose_series(model, robot_state, side)
-        camera_from_tcp = camera_from_base @ base_from_tcp
-        gripper_open = robot_state[:, gripper_column] >= config.gripper_threshold
-        outputs[side] = pose_matrices_to_state(camera_from_tcp, gripper_open)
+        base_tcp_poses[side] = tcp_pose_series(model, robot_state, side)
+        gripper_states[side] = (
+            robot_state[:, gripper_column] >= config.gripper_threshold
+        )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    atomic_save_npy(left_output, outputs["left"])
-    atomic_save_npy(right_output, outputs["right"])
-    atomic_write_json(
-        metadata_output,
-        {
-            "format": "robotwin_tcp_v1",
-            "shape": [len(robot_state), 7],
-            "columns": ["x", "y", "z", "roll", "pitch", "yaw", "gripper_open"],
-            "position_unit": "meter",
-            "rotation_unit": "radian",
-            "rpy_convention": (
-                "fixed-axis XYZ (R = Rz(yaw) @ Ry(pitch) @ Rx(roll))"
-            ),
-            "coordinate_frame": (
-                f"{config.camera} OpenCV camera (+x right, +y down, +z forward)"
-            ),
-            "camera": config.camera,
-            "extrinsics": "world_to_camera, read per frame from extrinsics/<camera>.npy",
-            "gripper": {
-                "type": "binary",
-                "open": 1,
-                "closed": 0,
-                "source_threshold": config.gripper_threshold,
+    outputs: dict[str, dict[str, np.ndarray]] = {}
+    for camera, _ in CAMERA_OUTPUTS:
+        world_to_camera = world_to_cameras[camera]
+        base_to_world_series = np.broadcast_to(base_to_world, world_to_camera.shape)
+        camera_from_base = world_to_camera @ base_to_world_series
+        outputs[camera] = {
+            side: pose_matrices_to_state(
+                camera_from_base @ base_tcp_poses[side], gripper_states[side]
+            )
+            for side in ("left", "right")
+        }
+
+    for camera, _ in CAMERA_OUTPUTS:
+        output_dir = output_dirs[camera]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        atomic_save_npy(output_dir / "left_state.npy", outputs[camera]["left"])
+        atomic_save_npy(output_dir / "right_state.npy", outputs[camera]["right"])
+        atomic_write_json(
+            output_dir / "metadata.json",
+            {
+                "format": "robotwin_tcp_v1",
+                "shape": [len(robot_state), 7],
+                "columns": [
+                    "x",
+                    "y",
+                    "z",
+                    "roll",
+                    "pitch",
+                    "yaw",
+                    "gripper_open",
+                ],
+                "position_unit": "meter",
+                "rotation_unit": "radian",
+                "rpy_convention": (
+                    "fixed-axis XYZ (R = Rz(yaw) @ Ry(pitch) @ Rx(roll))"
+                ),
+                "coordinate_frame": (
+                    f"{camera} OpenCV camera (+x right, +y down, +z forward)"
+                ),
+                "camera": camera,
+                "extrinsics": (
+                    f"world_to_camera, read per frame from extrinsics/{camera}.npy"
+                ),
+                "gripper": {
+                    "type": "binary",
+                    "open": 1,
+                    "closed": 0,
+                    "source_threshold": config.gripper_threshold,
+                },
+                "tcp_definition": "midpoint of the two inner fingertip contact faces",
+                "source": "robot_state.npy",
             },
-            "tcp_definition": "midpoint of the two inner fingertip contact faces",
-            "source": "robot_state.npy",
-        },
-    )
+        )
     return str(episode), "converted"
 
 
@@ -407,13 +440,13 @@ def discover_episodes(source: Path) -> list[Path]:
 def parse_args() -> argparse.Namespace:
     script_root = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(
-        description="Convert RoboTwin joint states into per-camera TCP xyz/rpy/gripper arrays.",
+        description=(
+            "Convert RoboTwin joint states into head- and third-camera TCP "
+            "xyz/rpy/gripper arrays."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("source", type=Path, help="One episode, one task, or the 4d_datasets root")
-    parser.add_argument(
-        "--camera", default="head_view", help="Camera name under episode/extrinsics"
-    )
     parser.add_argument(
         "--urdf",
         type=Path,
@@ -454,8 +487,14 @@ def main() -> None:
         raise SystemExit("--gripper-threshold must be finite")
 
     episodes = discover_episodes(args.source)
-    config = ConversionConfig(urdf, args.camera, args.gripper_threshold, args.overwrite)
-    print(f"Found {len(episodes)} episode(s); camera={args.camera}; workers={args.workers}")
+    config = ConversionConfig(urdf, args.gripper_threshold, args.overwrite)
+    camera_summary = ", ".join(
+        f"{camera}->{output}" for camera, output in CAMERA_OUTPUTS
+    )
+    print(
+        f"Found {len(episodes)} episode(s); cameras={camera_summary}; "
+        f"workers={args.workers}"
+    )
 
     converted = skipped = failed = 0
     errors: list[tuple[Path, Exception]] = []
