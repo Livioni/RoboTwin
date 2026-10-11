@@ -102,6 +102,7 @@ class Base_Task(gym.Env):
         self.now_obs = {}
         self.take_action_cnt = 0
         self.eval_video_path = kwags.get("eval_video_save_dir", None)
+        self.eval_video_third_view = kwags.get("eval_video_third_view", False)
 
         self.save_freq = kwags.get("save_freq")
         self.world_pcd = None
@@ -603,8 +604,18 @@ class Base_Task(gym.Env):
         self.left_joint_path = args.get("left_joint_path", [])
         self.right_joint_path = args.get("right_joint_path", [])
 
-    def _set_eval_video_ffmpeg(self, ffmpeg):
+    def _set_eval_video_ffmpeg(self, ffmpeg, third_view_ffmpeg=None):
         self.eval_video_ffmpeg = ffmpeg
+        self.eval_video_third_view_ffmpeg = third_view_ffmpeg
+
+    def _write_eval_video_frame(self):
+        # Both streams use the same observation; observer_camera is also the
+        # third-view RGB sent to policies, before any model preprocessing.
+        cameras = self.now_obs["observation"]
+        self.eval_video_ffmpeg.stdin.write(cameras["head_camera"]["rgb"].tobytes())
+        third = getattr(self, "eval_video_third_view_ffmpeg", None)
+        if third is not None:
+            third.stdin.write(cameras["observer_camera"]["rgb"].tobytes())
 
     def close_env(self, clear_cache=False):
         if clear_cache:
@@ -614,10 +625,21 @@ class Base_Task(gym.Env):
         self.close()
 
     def _del_eval_video_ffmpeg(self):
-        if self.eval_video_ffmpeg:
-            self.eval_video_ffmpeg.stdin.close()
-            self.eval_video_ffmpeg.wait()
-            del self.eval_video_ffmpeg
+        errors = []
+        for name in ("eval_video_ffmpeg", "eval_video_third_view_ffmpeg"):
+            stream = getattr(self, name, None)
+            if stream is None:
+                continue
+            try:
+                stream.stdin.close()
+            except (BrokenPipeError, OSError) as exc:
+                errors.append(str(exc))
+            code = stream.wait()
+            delattr(self, name)
+            if code:
+                errors.append(f"{name} exited with status {code}")
+        if errors:
+            raise RuntimeError("Evaluation video encoding failed: " + "; ".join(errors))
 
     def delay(self, delay_time, save_freq=None):
         render_freq = self.render_freq
@@ -1513,7 +1535,7 @@ class Base_Task(gym.Env):
 
         eval_video_freq = 1  # fixed
         if (self.eval_video_path is not None and self.take_action_cnt % eval_video_freq == 0):
-            self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
+            self._write_eval_video_frame()
 
         self.take_action_cnt += 1
         print(f"step: \033[92m{self.take_action_cnt} / {self.step_lim}\033[0m", end="\r")
@@ -1689,7 +1711,7 @@ class Base_Task(gym.Env):
                 self.eval_success = True
                 self.get_obs() # update obs
                 if (self.eval_video_path is not None):
-                    self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
+                    self._write_eval_video_frame()
                 return
 
         self._update_render()

@@ -51,6 +51,32 @@ EPISODE_PROGRESS_RE = re.compile(
 )
 
 
+def parse_episode_counts(line: str) -> tuple[int, int] | None:
+    match = EPISODE_PROGRESS_RE.search(ANSI_ESCAPE_RE.sub("", line))
+    if match is None:
+        return None
+    successes, completed = (int(value) for value in match.groups())
+    if completed <= 0 or successes > completed:
+        return None
+    return successes, completed
+
+
+def episode_metrics(successes: int, completed: int) -> dict[str, Any]:
+    return {
+        "episodes_succeeded": successes,
+        "episodes_completed": completed,
+        "task_success_rate": successes / completed if completed else None,
+    }
+
+
+def format_task_success_rate(result: Mapping[str, Any]) -> str:
+    completed = result.get("episodes_completed", 0)
+    if not completed:
+        return "N/A (no evaluated episodes reported)"
+    successes = result["episodes_succeeded"]
+    return f"{successes}/{completed} = {successes / completed:.1%}"
+
+
 class ConfigError(ValueError):
     pass
 
@@ -146,7 +172,7 @@ class EvalProgress:
             TextColumn("{task.fields[label]}"),
             BarColumn(bar_width=24),
             TaskProgressColumn(),
-            TextColumn("success {task.fields[success_rate]}"),
+            TextColumn("task success {task.fields[success_rate]}"),
             TimeElapsedColumn(),
             console=console,
             transient=True,
@@ -176,22 +202,21 @@ class EvalProgress:
                 "",
                 total=total,
                 label=label,
-                success_rate="0/0 (0.0%)",
+                success_rate="N/A",
             )
             self.completed[job.job_id] = 0
             self.totals[job.job_id] = total
 
     def update_from_line(self, job_id: str, line: str) -> None:
-        clean_line = ANSI_ESCAPE_RE.sub("", line)
-        match = EPISODE_PROGRESS_RE.search(clean_line)
-        if match is None:
+        counts = parse_episode_counts(line)
+        if counts is None:
             return
         with self.lock:
             task_id = self.task_ids.get(job_id)
             if task_id is None:
                 return
-            successes = int(match.group(1))
-            completed = min(int(match.group(2)), self.totals[job_id])
+            successes, completed = counts
+            completed = min(completed, self.totals[job_id])
             if completed > self.completed[job_id]:
                 self.completed[job_id] = completed
                 rate = successes / completed * 100 if completed else 0.0
@@ -852,6 +877,8 @@ def run_job(
     args_path = run_dir / "jobs" / f"{job.job_id}.args"
     command: list[str] = []
     process: subprocess.Popen[str] | None = None
+    successes = 0
+    completed = 0
 
     try:
         if stop_event.is_set():
@@ -895,6 +922,9 @@ def run_job(
             assert process.stdout is not None
             for line in process.stdout:
                 log_file.write(line)
+                counts = parse_episode_counts(line)
+                if counts is not None and counts[1] >= completed:
+                    successes, completed = counts
                 if progress_display is not None:
                     progress_display.update_from_line(job.job_id, line)
                 elif stream_output:
@@ -907,7 +937,7 @@ def run_job(
         duration = round(time.monotonic() - started, 3)
         if progress_display is None:
             emit(
-                f"[DONE] {job.job_id} status={status} gpu={gpu_id} "
+                f"[DONE] {job.job_id} process_status={status} gpu={gpu_id} "
                 f"duration={duration:.1f}s",
                 output_lock,
             )
@@ -924,6 +954,7 @@ def run_job(
             "log": str(log_path),
             "command": command,
             "overrides": job.overrides,
+            **episode_metrics(successes, completed),
         }
     except Exception as exc:
         if fail_fast:
@@ -942,6 +973,7 @@ def run_job(
             "duration_seconds": round(time.monotonic() - started, 3),
             "log": str(log_path),
             "error": str(exc),
+            **episode_metrics(successes, completed),
         }
     finally:
         if progress_display is not None:
@@ -1044,6 +1076,9 @@ def run_schedule(
             progress_display.stop()
 
     ordered_results = sorted(results, key=lambda item: item["job_id"])
+    episodes_succeeded = sum(item.get("episodes_succeeded", 0) for item in ordered_results)
+    episodes_completed = sum(item.get("episodes_completed", 0) for item in ordered_results)
+    episodes_requested = sum(int(job.overrides.get("test_num", 100)) for job in jobs)
     summary = {
         "run_id": run_id,
         "config": config_path,
@@ -1056,12 +1091,27 @@ def run_schedule(
         "jobs_succeeded": sum(item.get("status") == "success" for item in ordered_results),
         "jobs_failed": sum(item.get("status") == "failed" for item in ordered_results),
         "jobs_skipped": sum(item.get("status") == "skipped" for item in ordered_results),
+        "episodes_requested": episodes_requested,
+        **episode_metrics(episodes_succeeded, episodes_completed),
         "jobs": ordered_results,
     }
     summary_path = run_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=True), encoding="utf-8")
+    requested_by_job = {
+        job.job_id: int(job.overrides.get("test_num", 100)) for job in jobs
+    }
+    for result in ordered_results:
+        print(
+            f"[{result['job_id']}] Task success rate: {format_task_success_rate(result)} | "
+            f"evaluated={result.get('episodes_completed', 0)}/{requested_by_job[result['job_id']]} | "
+            f"process_status={result['status']}"
+        )
     print(
-        f"Summary: success={summary['jobs_succeeded']} failed={summary['jobs_failed']} "
+        f"Overall task success rate (by episode): {format_task_success_rate(summary)} | "
+        f"evaluated={episodes_completed}/{episodes_requested}"
+    )
+    print(
+        f"Process summary: completed={summary['jobs_succeeded']} failed={summary['jobs_failed']} "
         f"skipped={summary['jobs_skipped']} file={summary_path}"
     )
     failed_jobs = [

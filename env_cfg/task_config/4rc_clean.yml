@@ -1,0 +1,46 @@
+# FourRC: calibrated observer camera, no ground-truth depth input.
+render_freq: 0
+episode_num: 50
+use_seed: false
+# Collection stride in physics steps, not Hz: 250 / 15 ~= 16.67 Hz within motions.
+# Motion boundaries add frames; the existing export labels the nominal rate as 15 Hz.
+save_freq: 15
+embodiment:
+- aloha-agilex
+language_num: 100
+eval_instruction: seen
+domain_randomization:
+  random_background: false
+  cluttered_table: false
+  clean_background_rate: 1
+  random_head_camera_dis: 0
+  random_table_height: 0
+  random_light: false
+  crazy_random_light_rate: 0
+camera:
+  head_camera_type: D435
+  wrist_camera_type: D435
+  collect_head_camera: true
+  collect_wrist_camera: true
+  data_camera_names:
+  - head_camera
+  - left_camera
+  - right_camera
+  - observer_camera
+data_type:
+  rgb: true
+  third_view: true
+  depth: false
+  pointcloud: false
+  observer: true
+  endpose: true
+  qpos: true
+  mesh_segmentation: false
+  actor_segmentation: false
+pcd_down_sample_num: 1024
+pcd_crop: true
+save_path: ./data
+clear_cache_freq: 5
+collect_data: false
+eval_video_log: true
+eval_video_third_view: true

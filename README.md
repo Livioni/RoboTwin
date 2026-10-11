@@ -210,6 +210,23 @@ Task settings such as `demo_clean` and `demo_randomized` are stored in `env_cfg/
 
 ## 6. Evaluate Policies via XPolicyLab
 
+For the local 4RC Stage2 policy (third-view RGB, 8-frame history, 16 predicted TCP poses, configurable execution length with default 8), use:
+
+```bash
+bash scripts/eval_4rc.sh --task click_bell --test-num 2
+# Execute 4 actions before replanning:
+bash scripts/eval_4rc.sh --task click_bell --test-num 2 --execute-horizon 4
+# Manual inference UI: click once per action chunk (open http://127.0.0.1:8020):
+bash scripts/eval_4rc.sh --task click_bell --test-num 1 --execute-horizon 4 --viser -- --stream-output
+```
+
+See the [FourRC adapter guide](XPolicyLab/policy/FourRC/README.md) for checkpoints, clean/random settings,
+remote serving, camera-to-base conversion, and the nominal 15 Hz timing convention.
+
+Evaluation results and videos are saved together in `eval_result/rollout/<task>/<policy>/<task_config>/<checkpoint>/<timestamp>/`:
+`_result.txt` contains the statistics, `episodeN.mp4` shows the head camera, and `episodeN_third_view.mp4` shows the third camera.
+FourRC keeps waypoint-aligned RGB history in memory without saving per-frame image or NPZ files.
+
 All evaluation goes through `scripts/eval_policy.sh`. The policy adapter must exist under `XPolicyLab/policy/<policy_name>/` (see the [XPolicyLab policy catalog](https://github.com/XPolicyLab/XPolicyLab/tree/main/policy)).
 
 `--env-cfg-type` selects the XPolicyLab action profile (validated against `XPolicyLab/utils/robot/_robot_info.json`; `arx_x5` matches RoboTwin's default aloha-agilex layout), while the simulator embodiment stays controlled by `--task-config`.

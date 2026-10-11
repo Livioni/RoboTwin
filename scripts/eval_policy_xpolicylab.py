@@ -120,6 +120,15 @@ def build_policy_client(usr_args: dict[str, Any]):
     raise ValueError(f"unsupported protocol: {protocol}")
 
 
+def wait_for_policy_inference(model_client, policy_name: str) -> None:
+    """Poll FourRC's UI gate using short RPCs so manual pauses cannot time out."""
+    if policy_name != "FourRC":
+        return
+    import time
+    while not model_client.call(func_name="inference_ready"):
+        time.sleep(0.1)
+
+
 def close_policy_client(model_client) -> None:
     close = getattr(model_client, "close", None)
     if callable(close):
@@ -158,12 +167,22 @@ def build_eval_save_dir(
 ) -> Path:
     return (
         Path("eval_result")
+        / "rollout"
         / task_name
         / policy_name
         / task_config
         / checkpoint_result_subdir(ckpt_setting)
         / current_time
     )
+
+
+
+def configure_eval_video_output(args: dict[str, Any], save_dir: Path) -> None:
+    """Save rollout videos alongside the evaluation result for the same run."""
+    video_dir = ROBOTWIN_ROOT / save_dir
+    video_dir.mkdir(parents=True, exist_ok=True)
+    args["eval_video_save_dir"] = video_dir
+    print(f"Rollout videos: {video_dir / 'episode*.mp4'}")
 
 
 def load_task_args(usr_args: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -296,7 +315,7 @@ def main(usr_args: dict[str, Any]) -> None:
     if args["eval_video_log"]:
         camera_config = get_camera_config(args["camera"]["head_camera_type"])
         video_size = str(camera_config["w"]) + "x" + str(camera_config["h"])
-        args["eval_video_save_dir"] = save_dir
+        configure_eval_video_output(args, save_dir)
 
     if os.environ.get("ROBOTWIN_SUPPRESS_EVAL_CONFIG") != "1":
         print_config(args, embodiment_name)
@@ -329,6 +348,8 @@ def main(usr_args: dict[str, Any]) -> None:
     with open(file_path, "w", encoding="utf-8") as file:
         file.write(f"Timestamp: {current_time}\n\n")
         file.write(f"Instruction Type: {instruction_type}\n\n")
+        if args.get("eval_video_log"):
+            file.write(f"Rollout Videos: {args['eval_video_save_dir']}/episode*.mp4\n\n")
         file.write(str(suc_num / test_num))
 
     print(f"Data has been saved to {file_path}")
@@ -360,7 +381,7 @@ def main_batch(usr_args: dict[str, Any]) -> None:
     if args["eval_video_log"]:
         camera_config = get_camera_config(args["camera"]["head_camera_type"])
         video_size = str(camera_config["w"]) + "x" + str(camera_config["h"])
-        args["eval_video_save_dir"] = save_dir
+        configure_eval_video_output(args, save_dir)
 
     if os.environ.get("ROBOTWIN_SUPPRESS_EVAL_CONFIG") != "1":
         print_config(args, embodiment_name)
@@ -406,7 +427,6 @@ def main_batch(usr_args: dict[str, Any]) -> None:
                 worker_id,
                 per_worker_usr_args,
                 copy.deepcopy(args),
-                str(save_dir),
                 video_size,
                 instruction_type,
                 test_num,
@@ -505,6 +525,8 @@ def main_batch(usr_args: dict[str, Any]) -> None:
     with open(file_path, "w", encoding="utf-8") as file:
         file.write(f"Timestamp: {current_time}\n\n")
         file.write(f"Instruction Type: {instruction_type}\n\n")
+        if args.get("eval_video_log"):
+            file.write(f"Rollout Videos: {args['eval_video_save_dir']}/episode*.mp4\n\n")
         file.write(f"Batch Workers: {worker_num}\n")
         file.write(f"Skipped Seeds: {skipped}\n")
         file.write(str(success_num / completed))
@@ -522,7 +544,6 @@ def batch_eval_worker(
     worker_id: int,
     usr_args: dict[str, Any],
     args: dict[str, Any],
-    save_dir: str,
     video_size: str | None,
     instruction_type: str | None,
     test_num: int,
@@ -539,8 +560,7 @@ def batch_eval_worker(
     args = copy.deepcopy(args)
     args["eval_mode"] = True
     if args.get("eval_video_log"):
-        Path(save_dir).mkdir(parents=True, exist_ok=True)
-        args["eval_video_save_dir"] = save_dir
+        Path(args["eval_video_save_dir"]).mkdir(parents=True, exist_ok=True)
 
     model_client = None
     task_env = None
@@ -665,76 +685,37 @@ def run_one_batch_episode(
     task_env.set_instruction(instruction=instruction)
 
     if task_env.eval_video_path is not None:
-        ffmpeg = subprocess.Popen(
-            [
-                "ffmpeg",
-                "-y",
-                "-loglevel",
-                "error",
-                "-f",
-                "rawvideo",
-                "-pixel_format",
-                "rgb24",
-                "-video_size",
-                video_size,
-                "-framerate",
-                "10",
-                "-i",
-                "-",
-                "-pix_fmt",
-                "yuv420p",
-                "-vcodec",
-                "libx264",
-                "-crf",
-                "23",
-                f"{task_env.eval_video_path}/episode{episode_id}.mp4",
-            ],
-            stdin=subprocess.PIPE,
-        )
-        task_env._set_eval_video_ffmpeg(ffmpeg)
+        start_eval_video(task_env, episode_id, video_size)
 
     succ = False
     prepare_policy_case(model_client, task_name, seed_value, instruction, action_type)
     reset_policy(model_client)
     try:
+        observation = task_env.get_obs()
+        xpl_obs = robotwin_obs_to_xpolicylab(
+            observation, instruction=task_env.get_instruction(), env_idx=worker_id,
+            frequency=frequency, task_env=task_env)
+        model_client.call(func_name="update_obs", obs=xpl_obs)
         while not is_episode_end(task_env):
-            observation = task_env.get_obs()
-            xpl_obs = robotwin_obs_to_xpolicylab(
-                observation,
-                instruction=task_env.get_instruction(),
-                env_idx=worker_id,
-                frequency=frequency,
-                task_env=task_env,
-            )
-            model_client.call(func_name="update_obs", obs=xpl_obs)
+            wait_for_policy_inference(model_client, args["policy_name"])
             action_chunk = normalize_action_chunk(model_client.call(func_name="get_action"))
             if len(action_chunk) == 0:
                 raise RuntimeError("Policy returned an empty action chunk.")
-
-            for action_idx, action in enumerate(action_chunk):
+            for action in action_chunk:
                 flat_action, robotwin_action_type = xpolicylab_action_to_robotwin(
-                    action,
-                    action_type=action_type,
-                    current_observation=observation,
-                )
+                    action, action_type=action_type, current_observation=observation)
                 task_env.take_action(flat_action, action_type=robotwin_action_type)
-
-                if task_env.eval_success:
-                    succ = True
+                succ = bool(task_env.eval_success)
+                ended = succ or is_episode_end(task_env)
+                if ended and args["policy_name"] != "FourRC":
                     break
-                if is_episode_end(task_env) or action_idx + 1 == len(action_chunk):
-                    break
-
                 observation = task_env.get_obs()
                 xpl_obs = robotwin_obs_to_xpolicylab(
-                    observation,
-                    instruction=task_env.get_instruction(),
-                    env_idx=worker_id,
-                    frequency=frequency,
-                    task_env=task_env,
-                )
+                    observation, instruction=task_env.get_instruction(), env_idx=worker_id,
+                    frequency=frequency, task_env=task_env)
                 model_client.call(func_name="update_obs", obs=xpl_obs)
-
+                if ended:
+                    break
             if succ:
                 break
     except Exception:
@@ -770,6 +751,40 @@ def safe_close_env(task_env, clear_cache: bool = False) -> None:
             task_env.viewer.close()
     except Exception:
         pass
+
+
+def start_eval_video(task_env, episode_id: int, video_size: str) -> None:
+    """Record the standard head view and an optional synchronized third view."""
+    stem = f"episode{episode_id}"
+    outputs = [(video_size, f"{stem}.mp4")]
+    if getattr(task_env, "eval_video_third_view", False):
+        cameras = task_env.get_obs()["observation"]
+        if "observer_camera" not in cameras or "rgb" not in cameras["observer_camera"]:
+            raise ValueError("Third-view video requires observer_camera RGB in observations")
+        image = np.asarray(cameras["observer_camera"]["rgb"])
+        if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
+            raise ValueError("Third-view video requires uint8 RGB [H,W,3]")
+        height, width = image.shape[:2]
+        outputs.append((f"{width}x{height}", f"{stem}_third_view.mp4"))
+
+    streams = []
+    try:
+        for size, filename in outputs:
+            streams.append(subprocess.Popen(
+                ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo",
+                 "-pixel_format", "rgb24", "-video_size", size, "-framerate", "10",
+                 "-i", "-", "-pix_fmt", "yuv420p", "-vcodec", "libx264", "-crf", "23",
+                 str(Path(task_env.eval_video_path) / filename)],
+                stdin=subprocess.PIPE,
+            ))
+    except Exception:
+        for stream in streams:
+            try:
+                stream.stdin.close()
+            finally:
+                stream.wait()
+        raise
+    task_env._set_eval_video_ffmpeg(streams[0], streams[1] if len(streams) > 1 else None)
 
 
 def eval_remote_policy(
@@ -849,79 +864,49 @@ def eval_remote_policy(
         task_env.set_instruction(instruction=instruction)
 
         if task_env.eval_video_path is not None:
-            ffmpeg = subprocess.Popen(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-loglevel",
-                    "error",
-                    "-f",
-                    "rawvideo",
-                    "-pixel_format",
-                    "rgb24",
-                    "-video_size",
-                    video_size,
-                    "-framerate",
-                    "10",
-                    "-i",
-                    "-",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-vcodec",
-                    "libx264",
-                    "-crf",
-                    "23",
-                    f"{task_env.eval_video_path}/episode{task_env.test_num}.mp4",
-                ],
-                stdin=subprocess.PIPE,
-            )
-            task_env._set_eval_video_ffmpeg(ffmpeg)
+            start_eval_video(task_env, task_env.test_num, video_size)
 
         succ = False
         rollout_steps = 0
         rollout_failed = False
         prepare_policy_case(model_client, task_name, now_seed, instruction, action_type)
         reset_policy(model_client)
+        failure_stage = "environment"
         try:
+            failure_stage = "environment"
+            observation = task_env.get_obs()
+            failure_stage = "policy"
+            xpl_obs = robotwin_obs_to_xpolicylab(
+                observation, instruction=task_env.get_instruction(), env_idx=0,
+                frequency=frequency, task_env=task_env)
+            model_client.call(func_name="update_obs", obs=xpl_obs)
             while not is_episode_end(task_env):
-                observation = task_env.get_obs()
-                xpl_obs = robotwin_obs_to_xpolicylab(
-                    observation,
-                    instruction=task_env.get_instruction(),
-                    env_idx=0,
-                    frequency=frequency,
-                    task_env=task_env,
-                )
-                model_client.call(func_name="update_obs", obs=xpl_obs)
+                wait_for_policy_inference(model_client, args["policy_name"])
                 action_chunk = normalize_action_chunk(model_client.call(func_name="get_action"))
                 if len(action_chunk) == 0:
                     raise RuntimeError("Policy returned an empty action chunk.")
 
-                for action_idx, action in enumerate(action_chunk):
+                for action in action_chunk:
                     flat_action, robotwin_action_type = xpolicylab_action_to_robotwin(
-                        action,
-                        action_type=action_type,
-                        current_observation=observation,
-                    )
+                        action, action_type=action_type, current_observation=observation)
+                    failure_stage = "environment"
                     task_env.take_action(flat_action, action_type=robotwin_action_type)
                     rollout_steps += 1
-
-                    if task_env.eval_success:
-                        succ = True
-                        break
-                    if is_episode_end(task_env) or action_idx + 1 == len(action_chunk):
+                    succ = bool(task_env.eval_success)
+                    ended = succ or is_episode_end(task_env)
+                    if ended and args["policy_name"] != "FourRC":
                         break
 
+                    # FourRC buffers every completed waypoint, including the
+                    # final step, before termination or the next inference.
                     observation = task_env.get_obs()
+                    failure_stage = "policy"
                     xpl_obs = robotwin_obs_to_xpolicylab(
-                        observation,
-                        instruction=task_env.get_instruction(),
-                        env_idx=0,
-                        frequency=frequency,
-                        task_env=task_env,
-                    )
+                        observation, instruction=task_env.get_instruction(), env_idx=0,
+                        frequency=frequency, task_env=task_env)
                     model_client.call(func_name="update_obs", obs=xpl_obs)
-
+                    if ended:
+                        break
                 if succ:
                     break
         except Exception:
@@ -934,7 +919,7 @@ def eval_remote_policy(
 
         notify_trial_end(model_client, task_name, now_seed, succ)
 
-        if rollout_failed and rollout_steps == 0 and not succ:
+        if rollout_failed and rollout_steps == 0 and not succ and failure_stage == "environment":
             # Env broke before the policy could act (e.g. renderer buffer errors).
             # Don't burn an episode on it; clear caches and retry with the next seed.
             consecutive_env_errors += 1
@@ -1047,6 +1032,18 @@ def robotwin_obs_to_xpolicylab(
     task_env: Any | None = None,
 ) -> dict[str, Any]:
     instruction_text = instruction or observation.get("language") or ""
+    additional_info = {"frequency": int(frequency)}
+    if task_env is not None and hasattr(task_env, "take_action_cnt"):
+        additional_info["waypoint_index"] = int(task_env.take_action_cnt)
+        additional_info["episode_end"] = is_episode_end(task_env)
+    if "observer_camera" in observation.get("observation", {}):
+        additional_info["third_camera_source"] = "observer_camera"
+    if task_env is not None and hasattr(task_env, "robot"):
+        robot = task_env.robot
+        if getattr(robot, "is_dual_arm", False):
+            additional_info["T_world_from_robot_base"] = np.asarray(
+                robot.left_entity.get_root_pose().to_transformation_matrix(), dtype=np.float32
+            )
     return {
         "data_format_version": "v1.0",
         "instruction": instruction_text,
@@ -1054,7 +1051,7 @@ def robotwin_obs_to_xpolicylab(
         "env_idx": int(env_idx),
         "vision": convert_vision(observation),
         "state": convert_state(observation, task_env=task_env),
-        "additional_info": {"frequency": int(frequency)},
+        "additional_info": additional_info,
     }
 
 
@@ -1233,6 +1230,12 @@ def convert_state(observation: Mapping[str, Any], *, task_env: Any | None = None
 
     if task_env is not None and hasattr(task_env, "robot"):
         robot = task_env.robot
+        # Existing joint_action fields are drive targets. Keep measured qpos
+        # separate so FK queries never substitute commanded for executed poses.
+        for side in ("left", "right"):
+            getter = getattr(robot, f"get_{side}_arm_real_jointState", None)
+            if callable(getter):
+                state[f"{side}_arm_real_joint_state"] = np.asarray(getter()[:-1], dtype=np.float32)
         if hasattr(robot, "get_left_tcp_pose"):
             state["left_tcp_pose"] = np.asarray(robot.get_left_tcp_pose(), dtype=np.float32)
         if hasattr(robot, "get_right_tcp_pose"):
