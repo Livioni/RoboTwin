@@ -1,4 +1,4 @@
 [submodule "XPolicyLab"]
 	path = XPolicyLab
-	url = https://github.com/XPolicyLab/XPolicyLab.git
+	url = https://github.com/Livioni/XPolicyLab.git
 	branch = main
