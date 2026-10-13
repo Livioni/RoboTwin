@@ -1,4 +1,4 @@
-# FourRC: calibrated observer camera, no ground-truth depth input.
+# FourRC: calibrated observer RGB + required left/right wrist RGB.
 render_freq: 0
 episode_num: 50
 use_seed: false

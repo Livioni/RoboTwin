@@ -32,3 +32,4 @@ envs/curobo/*
 
 lerobot/
 4d_datasets/
+/eval_result_old

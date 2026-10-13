@@ -1,4 +1,6 @@
 tasks:
-  - click_bell
-  - pick_dual_bottles
+  - adjust_bottle
   - beat_block_hammer
+  - blocks_ranking_rgb
+  - blocks_ranking_size
+  - click_alarmclock
