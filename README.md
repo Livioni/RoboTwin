@@ -211,19 +211,21 @@ Task settings such as `demo_clean` and `demo_randomized` are stored in `env_cfg/
 ## 6. Evaluate Policies via XPolicyLab
 
 For the local wrist-conditioned 4RC Stage2 policy (third-view history and latest left/right wrist RGB), use:
-The default checkpoint has 4 historical frames and 40 predicted TCP poses; execute the first 8 before replanning.
-History and prediction lengths are read from the checkpoint. Non-wrist and old normalization checkpoints are unsupported.
+Pass a current **FiLM + componentwise-v2** wrist checkpoint explicitly. History and
+prediction lengths are read from that checkpoint; execute 16 actions before replanning
+by default, or set `--execute-horizon` within its prediction horizon.
 
 ```bash
-bash scripts/eval_4rc.sh --task adjust_bottle --test-num 2
+CHECKPOINT=/absolute/path/to/current-stage2-checkpoint
+bash scripts/eval_4rc.sh --checkpoint "$CHECKPOINT" --task adjust_bottle --test-num 2
 # Execute 4 actions before replanning:
-bash scripts/eval_4rc.sh --task adjust_bottle --test-num 2 --execute-horizon 4
+bash scripts/eval_4rc.sh --checkpoint "$CHECKPOINT" --task adjust_bottle --test-num 2 --execute-horizon 4
 # Manual inference UI: click once per action chunk (open http://127.0.0.1:8020):
-bash scripts/eval_4rc.sh --task adjust_bottle --test-num 1 --execute-horizon 4 --viser -- --stream-output
+bash scripts/eval_4rc.sh --checkpoint checkpoints/4rc-stage2-action-only-adjust-bottle-wrist-film-40chunk/checkpoint-5000 --task adjust_bottle --test-num 2 --execute-horizon 32 --viser -- --stream-output
 ```
 
 See the [FourRC adapter guide](XPolicyLab/policy/FourRC/README.md) for checkpoints, clean/random settings,
-remote serving, quantile normalization, coordinate conversion, and waypoint-based execution timing.
+remote serving, componentwise normalization, coordinate conversion, and waypoint-based execution timing.
 
 Evaluation results and videos are saved together in `eval_result/rollout/<task>/<policy>/<task_config>/<checkpoint>/<timestamp>/`:
 `_result.txt` contains the statistics, `episodeN.mp4` shows the head camera, and `episodeN_third_view.mp4` shows the third camera.
