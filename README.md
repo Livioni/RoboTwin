@@ -211,7 +211,8 @@ Task settings such as `demo_clean` and `demo_randomized` are stored in `env_cfg/
 ## 6. Evaluate Policies via XPolicyLab
 
 For the local wrist-conditioned 4RC Stage2 policy (third-view history and latest left/right wrist RGB), use:
-Pass a current **FiLM + componentwise-v2** wrist checkpoint explicitly. History and
+Pass a current **groot_tcp_v1 (V2)** checkpoint with `action_norm.json` and
+`state_norm.json` explicitly. Inputs include the latest real 14D joint/gripper state. History and
 prediction lengths are read from that checkpoint; execute 16 actions before replanning
 by default, or set `--execute-horizon` within its prediction horizon.
 
@@ -219,9 +220,9 @@ by default, or set `--execute-horizon` within its prediction horizon.
 CHECKPOINT=/absolute/path/to/current-stage2-checkpoint
 bash scripts/eval_4rc.sh --checkpoint "$CHECKPOINT" --task adjust_bottle --test-num 2
 # Execute 4 actions before replanning:
-bash scripts/eval_4rc.sh --checkpoint "$CHECKPOINT" --task adjust_bottle --test-num 2 --execute-horizon 4
+bash scripts/eval_4rc.sh --checkpoint checkpoints/4rc-stage2-gr00t-qity/checkpoint-20000 --task adjust_bottle --test-num 20 --execute-horizon 20
 # Manual inference UI: click once per action chunk (open http://127.0.0.1:8020):
-bash scripts/eval_4rc.sh --checkpoint checkpoints/4rc-stage2-action-only-adjust-bottle-wrist-film-40chunk/checkpoint-5000 --task adjust_bottle --test-num 2 --execute-horizon 32 --viser -- --stream-output
+bash scripts/eval_4rc.sh --checkpoint "$CHECKPOINT" --task adjust_bottle --test-num 20 --execute-horizon 32 --viser -- --stream-output
 ```
 
 See the [FourRC adapter guide](XPolicyLab/policy/FourRC/README.md) for checkpoints, clean/random settings,

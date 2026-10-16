@@ -44,7 +44,7 @@ Usage: bash scripts/eval_4rc.sh --checkpoint PATH [options] [-- scheduler-option
   --task NAME                 Default adjust_bottle
   --config PATH               Use an existing task list (overrides --task)
   --setting clean|random      Default clean; calibrated third camera enabled
-  --checkpoint PATH           Required: wrist FiLM + componentwise-v2 Stage2 checkpoint directory
+  --checkpoint PATH           Required: groot_tcp_v1 + componentwise-v2 + state-v1 Stage2 checkpoint directory
   --test-num N                Default 2 episodes per task
   --execute-horizon N         Execute first N predictions per inference (1..H; deploy.yml default 16)
   --viser                     Browser UI: click once to infer and execute one chunk
@@ -69,7 +69,7 @@ HELP
         *) echo "Unknown option: $1 (use --help)" >&2; exit 2 ;;
     esac
 done
-[[ -n "$checkpoint" ]] || { echo '--checkpoint PATH is required (wrist FiLM + componentwise-v2 Stage2)' >&2; exit 2; }
+[[ -n "$checkpoint" ]] || { echo '--checkpoint PATH is required (groot_tcp_v1 + componentwise-v2 + state-v1 Stage2)' >&2; exit 2; }
 [[ "$setting" == clean || "$setting" == random ]] || { echo 'setting must be clean or random' >&2; exit 2; }
 if [[ -n "$execute_horizon" || ${FOURRC_EXECUTE_HORIZON+x} ]]; then
     [[ "$execute_horizon" =~ ^[1-9][0-9]*$ ]] || { echo 'execute_horizon must be a positive integer up to the checkpoint prediction horizon' >&2; exit 2; }
@@ -99,7 +99,7 @@ model_cfg=read_config(checkpoint, require_weights=require_weights == '1')
 horizon=os.environ.get('FOURRC_EXECUTE_HORIZON', yaml.safe_load(Path(deploy).read_text()).get('execute_horizon',8))
 if isinstance(horizon, bool) or not str(horizon).isdigit() or not 1 <= int(horizon) <= model_cfg['prediction_horizon']:
     raise ValueError(f"execute_horizon must be an integer from 1 to {model_cfg['prediction_horizon']}")
-print(f"[FourRC] wrist=true; execute_horizon={horizon}; history={model_cfg['history_frames']}, prediction={model_cfg['prediction_horizon']}, language=film, normalization=componentwise-v2, time_encoding=index", flush=True)
+print(f"[FourRC] wrist=true; execute_horizon={horizon}; history={model_cfg['history_frames']}, prediction={model_cfg['prediction_horizon']}, action_head=groot_tcp_v1, normalization=componentwise-v2, state=14D/state-v1, time_encoding=index", flush=True)
 cfg=yaml.safe_load(Path(source).read_text()) if source else {'tasks':[task]}
 cfg.update(gpu_ids=gpus, jobs_per_gpu=1, num_workers=1)
 Path(dest).write_text(yaml.safe_dump(cfg))
