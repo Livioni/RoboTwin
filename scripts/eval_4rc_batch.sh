@@ -11,8 +11,8 @@ for setting in clean random; do
     bash scripts/eval_4rc.sh \
         --config "$ROOT/scripts/eval_4rc_tasks.yml" \
         --setting "$setting" \
-        --test-num 100 \
-        --execute-horizon 8 \
+        --test-num 10 \
+        --execute-horizon 20 \
         "$@" \
         -- --output-dir "$ROOT/eval_result/multitask/4rc_${setting}"
 done
