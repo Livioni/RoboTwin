@@ -308,6 +308,11 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--output-dir", type=Path, default=Path("eval_result/multitask"))
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse fully evaluated matching jobs from previous summaries in --output-dir.",
+    )
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument(
         "--stream-output",
@@ -753,6 +758,86 @@ def gpu_slots(capacity: Mapping[str, int]) -> list[str]:
     ]
 
 
+def resume_key(command: Any, overrides: Any) -> tuple[str, ...] | None:
+    """Match evaluation inputs, ignoring job order, GPU and server assignment."""
+    if (
+        not isinstance(command, list)
+        or len(command) < 8
+        or not all(isinstance(value, str) for value in command)
+        or not isinstance(overrides, dict)
+    ):
+        return None
+    script = Path(command[1])
+    checkpoint = command[4]
+    if "/" in checkpoint or checkpoint.startswith("~"):
+        path = Path(checkpoint).expanduser()
+        checkpoint = str((ROBOTWIN_ROOT / path).resolve())
+    return (
+        script.parent.name,
+        script.name,
+        *command[2:4],
+        checkpoint,
+        *command[5:8],
+        json.dumps(overrides, sort_keys=True),
+    )
+
+
+def load_resume_results(jobs: list[EvalJob], output_dir: Path) -> list[dict[str, Any]]:
+    completed: dict[tuple[str, ...], tuple[dict[str, Any], Path]] = {}
+    for summary_path in sorted(output_dir.glob("*/summary.json")):
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"[WARN] Cannot resume from {summary_path}: {exc}", file=sys.stderr)
+            continue
+        if not isinstance(summary, dict) or not isinstance(summary.get("jobs"), list):
+            continue
+        for result in summary["jobs"]:
+            if not isinstance(result, dict):
+                continue
+            successes = result.get("episodes_succeeded")
+            count = result.get("episodes_completed")
+            if (
+                result.get("status") != "success"
+                or result.get("return_code") != 0
+                or not isinstance(successes, int)
+                or not isinstance(count, int)
+                or not 0 <= successes <= count
+                or count == 0
+            ):
+                continue
+            key = resume_key(result.get("command"), result.get("overrides"))
+            if key is None:
+                continue
+            requested = result["overrides"].get("test_num", 100)
+            if isinstance(requested, int) and count >= requested:
+                completed[key] = (result, summary_path)
+
+    results: list[dict[str, Any]] = []
+    for job in jobs:
+        endpoint = PolicyEndpoint("resume", 1) if job.remote_enabled else None
+        key = resume_key(job.command("0", endpoint), job.overrides)
+        previous = completed.get(key)
+        if previous is None:
+            continue
+        result, summary_path = previous
+        if result["episodes_completed"] < int(job.overrides.get("test_num", 100)):
+            continue
+        results.append({
+            **result,
+            "job_id": job.job_id,
+            "task": job.task_name,
+            "seed": job.seed,
+            "resumed_from": str(summary_path),
+        })
+        print(
+            f"[RESUME] {job.job_id}: already evaluated "
+            f"{result['episodes_completed']} episodes; source={summary_path}"
+        )
+    print(f"[RESUME] completed={len(results)} pending={len(jobs) - len(results)} total={len(jobs)}")
+    return results
+
+
 def print_schedule(
     jobs: list[EvalJob],
     capacity: Mapping[str, int],
@@ -1003,6 +1088,7 @@ def run_schedule(
     capacity: Mapping[str, int],
     settings: Mapping[str, Any],
     config_path: str | None,
+    resumed_results: list[dict[str, Any]] | None = None,
 ) -> int:
     run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
     run_dir = Path(settings["output_dir"]) / run_id
@@ -1024,7 +1110,8 @@ def run_schedule(
     process_lock = threading.Lock()
     stop_event = threading.Event()
     active_processes: dict[str, subprocess.Popen[str]] = {}
-    results: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = list(resumed_results or [])
+    resumed_ids = {result["job_id"] for result in results}
     started = time.monotonic()
     max_parallel_jobs = sum(capacity.values())
     if remote_endpoints:
@@ -1042,10 +1129,43 @@ def run_schedule(
     )
 
     print_eval_info(jobs, capacity, run_dir, console, remote_endpoints)
+
+    def save_summary() -> dict[str, Any]:
+        ordered = sorted(results, key=lambda item: item["job_id"])
+        summary = {
+            "run_id": run_id,
+            "config": config_path,
+            "gpu_capacity": dict(capacity),
+            "remote_enabled": bool(settings["remote_enabled"]),
+            "remote_servers": [endpoint.address for endpoint in remote_endpoints],
+            "duration_seconds": round(time.monotonic() - started, 3),
+            "jobs_total": len(jobs),
+            "jobs_finished": len(ordered),
+            "jobs_succeeded": sum(item.get("status") == "success" for item in ordered),
+            "jobs_failed": sum(item.get("status") == "failed" for item in ordered),
+            "jobs_skipped": sum(item.get("status") == "skipped" for item in ordered),
+            "jobs_resumed": len(resumed_ids),
+            "episodes_requested": sum(int(job.overrides.get("test_num", 100)) for job in jobs),
+            **episode_metrics(
+                sum(item.get("episodes_succeeded", 0) for item in ordered),
+                sum(item.get("episodes_completed", 0) for item in ordered),
+            ),
+            "jobs": ordered,
+        }
+        # Persist each finished job, including when the scheduler is killed later.
+        temporary = run_dir / "summary.json.tmp"
+        temporary.write_text(json.dumps(summary, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary.replace(run_dir / "summary.json")
+        return summary
+
+    save_summary()
+    interrupted = False
     if progress_display is not None:
         progress_display.start()
     try:
         for job in jobs:
+            if job.job_id in resumed_ids:
+                continue
             futures.append(
                 executor.submit(
                     run_job,
@@ -1064,7 +1184,9 @@ def run_schedule(
             )
         for future in as_completed(futures):
             results.append(future.result())
+            save_summary()
     except KeyboardInterrupt:
+        interrupted = True
         stop_event.set()
         terminate_processes(active_processes, process_lock)
         for future in futures:
@@ -1072,31 +1194,21 @@ def run_schedule(
         print("\nEvaluation interrupted.", file=sys.stderr)
     finally:
         executor.shutdown(wait=True, cancel_futures=True)
+        collected_ids = {result["job_id"] for result in results}
+        for future in futures:
+            if future.done() and not future.cancelled():
+                result = future.result()
+                if result["job_id"] not in collected_ids:
+                    results.append(result)
+                    collected_ids.add(result["job_id"])
         if progress_display is not None:
             progress_display.stop()
 
-    ordered_results = sorted(results, key=lambda item: item["job_id"])
-    episodes_succeeded = sum(item.get("episodes_succeeded", 0) for item in ordered_results)
-    episodes_completed = sum(item.get("episodes_completed", 0) for item in ordered_results)
-    episodes_requested = sum(int(job.overrides.get("test_num", 100)) for job in jobs)
-    summary = {
-        "run_id": run_id,
-        "config": config_path,
-        "gpu_capacity": dict(capacity),
-        "remote_enabled": bool(settings["remote_enabled"]),
-        "remote_servers": [endpoint.address for endpoint in remote_endpoints],
-        "duration_seconds": round(time.monotonic() - started, 3),
-        "jobs_total": len(jobs),
-        "jobs_finished": len(ordered_results),
-        "jobs_succeeded": sum(item.get("status") == "success" for item in ordered_results),
-        "jobs_failed": sum(item.get("status") == "failed" for item in ordered_results),
-        "jobs_skipped": sum(item.get("status") == "skipped" for item in ordered_results),
-        "episodes_requested": episodes_requested,
-        **episode_metrics(episodes_succeeded, episodes_completed),
-        "jobs": ordered_results,
-    }
+    summary = save_summary()
+    ordered_results = summary["jobs"]
+    episodes_completed = summary["episodes_completed"]
+    episodes_requested = summary["episodes_requested"]
     summary_path = run_dir / "summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=True), encoding="utf-8")
     requested_by_job = {
         job.job_id: int(job.overrides.get("test_num", 100)) for job in jobs
     }
@@ -1119,6 +1231,8 @@ def run_schedule(
     ]
     if failed_jobs:
         print(f"Failed jobs: {', '.join(failed_jobs)}", file=sys.stderr)
+    if interrupted:
+        return 130
     return 1 if summary["jobs_failed"] or summary["jobs_finished"] < len(jobs) else 0
 
 
@@ -1133,10 +1247,16 @@ def main() -> int:
         warnings = validate_jobs(jobs)
         for warning in warnings:
             print(f"[WARN] {warning}", file=sys.stderr)
+        resumed_results = load_resume_results(jobs, settings["output_dir"]) if cli.resume else []
+        resumed_ids = {result["job_id"] for result in resumed_results}
+        pending_jobs = [job for job in jobs if job.job_id not in resumed_ids]
         if cli.dry_run:
-            print_schedule(jobs, capacity, remote_endpoints)
+            print_schedule(pending_jobs, capacity, remote_endpoints)
             return 0
-        return run_schedule(jobs, capacity, settings, config.get("_config_path"))
+        if not pending_jobs:
+            print("[RESUME] All tasks are already complete; nothing to run.")
+            return 0
+        return run_schedule(jobs, capacity, settings, config.get("_config_path"), resumed_results)
     except ConfigError as exc:
         print(f"[CONFIG ERROR] {exc}", file=sys.stderr)
         return 2

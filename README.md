@@ -223,7 +223,16 @@ bash scripts/eval_4rc.sh --checkpoint "$CHECKPOINT" --task adjust_bottle --test-
 bash scripts/eval_4rc.sh --checkpoint checkpoints/4rc-stage2-gr00t-qity/checkpoint-20000 --task adjust_bottle --test-num 20 --execute-horizon 20
 # Manual inference UI: click once per action chunk (open http://127.0.0.1:8020):
 bash scripts/eval_4rc.sh --checkpoint "$CHECKPOINT" --task adjust_bottle --test-num 20 --execute-horizon 32 --viser -- --stream-output
+# Resume clean/random batch evaluation from existing task results:
+bash scripts/eval_4rc_batch.sh --checkpoint "$CHECKPOINT" --resume
 ```
+
+`--resume` checks previous summaries under `eval_result/multitask/4rc_clean/` and
+`eval_result/multitask/4rc_random/`. It skips tasks that finished all requested
+episodes with matching checkpoint, task, seed and evaluation options, including
+tasks with a 0% success rate. Failed or incomplete tasks restart from the beginning.
+Add `--dry-run` to preview the remaining tasks. New summaries include reused results
+and are saved after each task finishes so subsequent resumes retain completed work.
 
 See the [FourRC adapter guide](XPolicyLab/policy/FourRC/README.md) for checkpoints, clean/random settings,
 remote serving, componentwise normalization, coordinate conversion, and waypoint-based execution timing.

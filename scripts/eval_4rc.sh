@@ -54,6 +54,7 @@ Usage: bash scripts/eval_4rc.sh --checkpoint PATH [options] [-- scheduler-option
   --gpu-ids 0,1               Default 0; one policy server + simulator per GPU
   --policy-conda-env NAME      Default 4rc
   --eval-env-conda-env NAME    Default RoboTwin
+  --resume                    Reuse completed matching tasks; rerun failed/incomplete tasks
   --dry-run                   Validate the schedule without starting processes
   -- [scheduler-options]      E.g. --enable-remote --policy-server-ip HOST --policy-server-port PORT
 Environment: FOURRC_ROOT, FOURRC_T5_MODEL, FOURRC_LOG_DIR, FOURRC_EXECUTE_HORIZON
@@ -65,6 +66,7 @@ For an existing remote server, configure execute_horizon on the server host.
 HELP
             exit 0 ;;
         --) shift; extra+=("$@"); break ;;
+        --resume) extra+=("$1"); shift ;;
         --dry-run) dry_run=1; extra+=("$1"); shift ;;
         *) echo "Unknown option: $1 (use --help)" >&2; exit 2 ;;
     esac
